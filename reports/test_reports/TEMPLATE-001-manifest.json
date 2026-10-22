@@ -1,0 +1,12 @@
+{
+  "baseline_commit": "22127c45e06076ecde62ec80253ea45d67978522",
+  "files": {
+    "scripts/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scripts/_cli_helper.py": "3d330761f5f87f4ca17ae845d67cafca50c90fc8ea6e425691f8a7a6a4d2e34d",
+    "scripts/check_connection.py": "79ddbdd6775f74680dd4186477b9db6b40b1bc7ab43beb1ace9995895b6d38ba",
+    "scripts/init_project.py": "ec9bf176598959f7b02a8c88a38032d26e0b072828c42ebe73aa790d13e3f948",
+    "scripts/probe_peer.py": "5eecb5241b4be16b77c16c44f8bd36d439ad56654aad07ef188e61d786157405",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/test_scripts.py": "a5834712ba35a18f8283674bfd693c0f4b358c94f579910cc4e2afca9ef410b0"
+  }
+}

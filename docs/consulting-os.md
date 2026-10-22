@@ -27,6 +27,13 @@
 - Agent 輸出衝突時，列出衝突、trade-off 與建議決策路徑。
 - Consulting OS 不改變固定工程角色：Claude Code 實作，Codex review。
 
+## Explicit-Only Subagent Delegation
+
+- 只有任務明確授權（包含對象、範圍與界限）時，才可委派 subagent。
+- 受委派的 subagent 不得自行再委派其他 agent（Rule 8：No Recursive Delegation）。
+- 沒有明確的任務授權，任何一方不得自行形成 agent 鏈。
+- 委派後，受派工方需回傳結果至主控方，由主控方決定下一步。
+
 ## Solution Order
 
 依序考慮 Process Improvement、Paper-to-System、Data Standardization、System Workflow、Dashboard、Rule-based Automation、Human Review、Integration、AI Assistance、AI Agent。
