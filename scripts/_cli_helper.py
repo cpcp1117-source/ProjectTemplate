@@ -23,8 +23,9 @@ def build_args(cli_path, user_args):
     """
     Build a safe subprocess argument list for the given CLI path.
 
+    .py paths are invoked as [sys.executable, -X, utf8, path, ...args].
     On Windows, if the path ends in .cmd, attempts to resolve the shim to
-    [node_exe, js_entrypoint] or a native .exe. Raises ValueError if the shim
+    a native .exe or [node_exe, js_entrypoint]. Raises ValueError if the shim
     cannot be resolved — cmd /c is NOT used as a fallback because cmd.exe
     reparses metacharacters and expands % variables, creating shell injection risk.
 
@@ -33,6 +34,9 @@ def build_args(cli_path, user_args):
     """
     cli_path = str(cli_path)
     user_args = list(user_args)
+
+    if cli_path.lower().endswith('.py'):
+        return [sys.executable, '-X', 'utf8', cli_path] + user_args
 
     if os.name == 'nt' and cli_path.lower().endswith('.cmd'):
         resolved = _resolve_cmd_shim(cli_path)
@@ -81,11 +85,14 @@ def run_with_timeout(args, timeout_secs, cwd=None, env=None):
             stderr.decode('utf-8', errors='replace'),
         )
     except subprocess.TimeoutExpired:
-        _kill_tree(proc)
+        cleanup_error = _kill_tree(proc)
+        # Bounded reap of pipes after kill.
         try:
-            proc.wait(timeout=5)
+            proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
-            pass
+            cleanup_error = cleanup_error or 'pipe reap timed out after 5s'
+        if cleanup_error:
+            raise RuntimeError(f'Process cleanup failed: {cleanup_error}') from None
         raise
 
 
@@ -134,19 +141,22 @@ def _resolve_cmd_shim(cmd_path_str):
 
     dp0 = cmd_path.parent
 
-    # Pattern 1: %dp0%\relative\path.js
-    m = re.search(
-        r'%dp0%\\([^\s"\'%]+\.js)',
-        content,
-        re.IGNORECASE,
-    )
+    # Pattern 1: %dp0%\relative\path.exe (native exe — e.g. npm-installed claude shim)
+    m = re.search(r'%dp0%\\([^\s"\'%]+\.exe)', content, re.IGNORECASE)
+    if m:
+        exe_path = dp0 / m.group(1)
+        if exe_path.exists():
+            return [str(exe_path)]
+
+    # Pattern 2: %dp0%\relative\path.js
+    m = re.search(r'%dp0%\\([^\s"\'%]+\.js)', content, re.IGNORECASE)
     if m:
         js_path = dp0 / m.group(1)
         node_exe = _find_node(dp0)
         if js_path.exists() and node_exe:
             return [node_exe, str(js_path)]
 
-    # Pattern 2: absolute path "C:\...\file.js"
+    # Pattern 3: absolute path "C:\...\file.js"
     m = re.search(r'"([A-Za-z]:[^"]+\.js)"', content)
     if m:
         js_path = pathlib.Path(m.group(1))
@@ -166,15 +176,30 @@ def _find_node(cmd_dir):
 
 
 def _kill_tree(proc):
-    """Kill the process tree after a timeout."""
+    """
+    Kill the process tree after a timeout.
+
+    Returns an error string if cleanup failed, None on success.
+    Caller must still reap pipes (bounded communicate) after this returns.
+    """
     if os.name == 'nt':
-        subprocess.run(
-            ['taskkill', '/T', '/F', '/PID', str(proc.pid)],
-            capture_output=True,
-        )
+        try:
+            result = subprocess.run(
+                ['taskkill', '/T', '/F', '/PID', str(proc.pid)],
+                capture_output=True,
+                timeout=5,
+            )
+            # rc 0 = killed; 128 / 255 = process already gone — both acceptable.
+            if result.returncode not in (0, 128, 255):
+                return f'taskkill rc={result.returncode}'
+        except subprocess.TimeoutExpired:
+            return 'taskkill timed out after 5s'
+        except FileNotFoundError:
+            return 'taskkill not found on PATH'
     else:
         import signal
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except ProcessLookupError:
             pass
+    return None

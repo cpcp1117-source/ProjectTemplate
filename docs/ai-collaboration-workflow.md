@@ -61,26 +61,26 @@ Effective Date: 2026-10-22
 
 ## 16-Step Role Map
 
-| Step | Owner | Action |
-|------|-------|--------|
-| 1 | Codex | 接收需求，確認範圍與 baseline |
-| 2 | Codex | 整理需求文件、建立 acceptance criteria |
-| 3 | Codex | 需求審查，標記缺口與風險 |
-| 4 | Claude | 設計架構與技術規格 |
-| 5 | Codex | 審查設計文件，提供意見 |
-| 6 | Codex | 任務規劃，建立 task handoff 至 Claude |
-| 7 | Claude | 設定環境、準備基礎設施 |
-| 8 | Claude | 實作功能（frontend、backend、tests） |
-| 9 | Codex | 獨立驗證：執行檢查、測試、diff 分析 |
-| 10 | Codex | 程式碼審查，提出 findings；Claude 逐項回應 |
-| 11 | Claude | 功能驗收測試；Codex 審查測試證據 |
-| 12 | Claude | 修正 findings；Codex 複驗（最多兩輪） |
-| 13 | Codex | 發布準備：changelog、版本標籤、發布文件 |
-| 14 | Claude | 部署與 smoke test |
-| 15 | Claude | 撰寫文件與維護說明 |
-| 16 | Codex | 審查文件與維護產物 |
+| Step | Name | Owner | Action |
+|------|------|-------|--------|
+| 1 | Requirements Discovery | Codex | 接收需求，確認範圍與 baseline |
+| 2 | Scope Definition | Codex | 整理需求文件、建立 acceptance criteria |
+| 3 | Existing System Analysis | Codex | 現有系統分析，標記缺口與風險 |
+| 4 | Solution Design | Claude + Codex review | Claude 設計方案；Codex 審查設計 |
+| 5 | Technical Design | Claude + Codex review | Claude 產出技術規格；Codex 審查 |
+| 6 | Task Planning | Codex | 任務規劃，建立 task handoff 至 Claude |
+| 7 | Environment Setup | Claude | 設定環境、準備基礎設施 |
+| 8 | Implementation | Claude | 實作功能（frontend、backend、tests） |
+| 9 | Automated Verification | Codex | 獨立驗證：執行檢查、測試、diff 分析 |
+| 10 | Code Review | Codex leading / Claude responds | Codex 程式碼審查，提出 findings；Claude 逐項回應 |
+| 11 | Functional Acceptance | Claude / Codex review | Claude 功能驗收測試；Codex 審查測試證據 |
+| 12 | Remediation & Recheck | Claude / Codex | Claude 修正 findings；Codex 複驗（最多兩輪） |
+| 13 | Release Preparation | Codex | 發布準備：changelog、版本標籤、發布文件 |
+| 14 | Deployment & Smoke Test | Claude | 部署與 smoke test |
+| 15 | Documentation & Handoff | Claude / Codex review | Claude 撰寫文件；Codex 審查交付物 |
+| 16 | Monitoring & Maintenance | Claude / Codex review | Claude 執行維護；Codex 審查維護產物 |
 
-**Human authority**: 商業範疇決策、有爭議的 trade-off、授權發布決策。例行的已授權工作不需要重新取得許可。
+**Human authority**: 商業範疇決策、有爭議的 trade-off、授權發布決策。例行的已授權工作不需要重新取得許可。Subagents 僅在任務明確授權時啟用，不得自行形成代理鏈。
 
 ## Task Entry Criteria
 
@@ -119,7 +119,9 @@ Effective Date: 2026-10-22
 
 ## Template vs. Active Project
 
-本 repo 中的 `tasks/current_task.md` 在初始分發時為空白模板（所有欄位填寫 TBD）。新專案建立後，第一個任務的 Owner 負責填寫所有欄位並歸檔完成的任務記錄至 `tasks/reports/`；不得覆蓋空白範本本身。
+本 repo 的 `tasks/current_task.md` 在初始分發時為空白模板（所有欄位填寫 TBD）。新專案建立後，第一個任務的 Owner 負責填寫所有欄位並持續更新任務狀態；完成的任務歸檔至 `tasks/reports/`。可重用的空白範本永久保存於 `docs/templates/task-handoff.md`。
+
+Skills 文件（`docs/skills/`）在 Git 倉庫為 dirty 狀態時，必須同時提交 Skills 文件變更與更新 dirty manifest；不得在 dirty 狀態下宣稱 Skills baseline 已確認。
 
 ## Self-Approval Prohibition
 

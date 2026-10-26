@@ -1,6 +1,6 @@
 # AI Collaboration Project Template
 
-> **Implementation Status: Not Ready — Draft PR.** 本次協作範本更新尚未通過驗收，請勿將初始化／連線工具當作已驗證的正式流程。65 項自動測試有 4 項失敗，另有協定解析、雙向證據與 Windows 啟動檔問題。完整結果見 [TEMPLATE-001 Review](reports/review_reports/TEMPLATE-001.md)。
+> **Implementation Status: Not Ready — Draft PR (2026-10-26).** 101 項自動測試、離線預檢與兩邊各自的 live 呼叫通過；真實雙向委派均失敗，仍不可視為已驗證可用。詳見 [TEMPLATE-001 Review](reports/review_reports/TEMPLATE-001.md)。
 
 可重用的 repo 範本，支援固定角色的 Claude Code 實作與 Codex 審查工作流程，並提供選用的 Consulting OS 擴充層。
 
@@ -69,7 +69,11 @@ claude "請讀取 docs/ai-collaboration-workflow.md 與 tasks/current_task.md �
 codex exec "讀取 docs/ai-collaboration-workflow.md 與 tasks/current_task.md，審查 Claude 的實作"
 ```
 
-**注意**：runtime config/root 不授予 sandbox 與 shell 存取，也不橋接至桌面聊天。不要在 GitHub CI 儲存帳號 tokens。
+**注意**：
+- Runtime config/root 不授予 sandbox 或 shell 存取；scopes 是行為約束，非技術權限。
+- Config 不建立永久連線，不橋接至目前桌面聊天。
+- 不要在 GitHub CI 或 git 儲存帳號 tokens、raw logs 或 session ID。
+- 移動專案目錄或工作流程文件變更後：將 `.collaboration/local.json` 重新命名為備份，再重新執行 `init_project.py`，不要靜默覆蓋現有 config。
 
 ## Core Files
 
@@ -104,12 +108,21 @@ Windows PowerShell 等效指令：用 `python` 替換 `python3`；所有腳本�
 
 Skill 程序見 `docs/skills/`；thin entries 分別在 `.agents/skills/` 與 `.claude/skills/`。
 
+**Custom Skills 呼叫方式：**
+- Codex：`$skill-name`（例如 `$collaboration-handoff`）
+- Claude Code：`/skill-name`（例如 `/collaboration-handoff`）
+
+Host discovery 不由 runtime 自動完成；需明確指定對象與範圍。
+
 ## Tests
 
-```bash
-python -m pytest tests/ -v
-# 或
-python -m unittest discover tests/
+```powershell
+# Windows PowerShell (UTF-8 mode required)
+python -X utf8 -m unittest tests/test_scripts.py -v
+# 或 discover
+python -X utf8 -m unittest discover tests/
 ```
 
-測試使用假 CLI / subprocess fixtures，不發出真實模型呼叫。
+測試使用標準函式庫 unittest，假 CLI subprocess fixtures，不發出真實模型呼叫。不需要 pytest。
+
+目前狀態：**Pending Validation** — 測試尚未由 Codex 執行，不宣告通過。

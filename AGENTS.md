@@ -6,7 +6,7 @@
 
 Codex 是本 repo 的固定審查與驗證負責方。
 
-Codex 審查 Claude Code 產出的成果，步驟 1–3、6、9、10、13、16 由 Codex 負責（詳見角色地圖）。未經人工明確更改本 repo 政策，Codex 不實作產品功能、frontend、backend、架構或例行修正。
+Codex 審查 Claude Code 產出的成果，步驟 1（Requirements Discovery）、2（Scope Definition）、3（Existing System Analysis）、6（Task Planning）、9（Automated Verification）、10（Code Review）、13（Release Preparation）由 Codex 主導；步驟 4、5、11、12、15、16 為共同角色（詳見角色地圖）。未經人工明確更改本 repo 政策，Codex 不實作產品功能、frontend、backend、架構或例行修正。
 
 ## Responsibilities
 

@@ -10,7 +10,7 @@ Modes:
                   Checks CLI versions, required docs, config, rule hash.
   --live          Real model calls. Each CLI must return the nonce, actual
                   root, and current rule hash computed from the workflow file.
-  --bidirectional Live calls + cross-direction probe via outer model→probe_peer.
+  --bidirectional Live calls + cross-direction probe via outer model->probe_peer.
                   Requires --live. Outer model must show tool_use evidence.
 
 Exit codes:
@@ -33,6 +33,7 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 _RECURSION_ENV = 'AI_COLLAB_CHECK_DEPTH'
 
@@ -71,7 +72,23 @@ def main(argv=None):
         print('ERROR: --bidirectional requires --live.')
         sys.exit(1)
 
-    if int(os.environ.get(_RECURSION_ENV, '0')) > 0:
+    _depth_raw = os.environ.get(_RECURSION_ENV, '0')
+    try:
+        _depth = int(_depth_raw)
+    except (ValueError, TypeError):
+        report = {
+            'error': 'malformed_env',
+            'env': _RECURSION_ENV,
+            'value': _depth_raw,
+            'message': (
+                f'Environment variable {_RECURSION_ENV} has a non-integer value '
+                f'{_depth_raw!r}. Unset it or set it to 0 and retry.'
+            ),
+            'overall': 'Fail',
+        }
+        print(json.dumps(report, indent=2))
+        sys.exit(1)
+    if _depth > 0:
         print('ERROR: Recursive --bidirectional call detected. Refusing to proceed.')
         sys.exit(1)
 
@@ -100,6 +117,11 @@ def main(argv=None):
             results.update(live_results)
             raw_logs.update(live_logs)
 
+    live_failed = args.live and any(
+        k.startswith('live:') and not k.endswith(':session_id') and str(v).startswith('Fail')
+        for k, v in results.items()
+    )
+
     if args.bidirectional:
         if preflight_failed:
             results['bidirectional:claude-to-codex'] = (
@@ -107,6 +129,13 @@ def main(argv=None):
             )
             results['bidirectional:codex-to-claude'] = (
                 'NotRun(preflight failed — fix preflight first)'
+            )
+        elif live_failed:
+            results['bidirectional:claude-to-codex'] = (
+                'NotRun(live check failed — fix live checks first)'
+            )
+            results['bidirectional:codex-to-claude'] = (
+                'NotRun(live check failed — fix live checks first)'
             )
         else:
             bidi_results, bidi_logs = _run_bidirectional(
@@ -122,8 +151,8 @@ def main(argv=None):
 
     _print_summary(results, report_path)
 
-    failed = any(str(v).startswith('Fail') for v in results.values())
-    return 1 if failed else 0
+    overall = report.get('overall', 'Fail')
+    return 0 if overall == 'Pass' else 1
 
 
 # ---------------------------------------------------------------------------
@@ -150,39 +179,53 @@ def _run_preflight(root, config, config_errors, overrides, timeouts):
     timeout = _get_timeout(timeouts, 'preflight_secs', 15)
 
     # Required docs
+    docs_ok = True
     for doc in REQUIRED_DOCS:
         p = root / doc
-        results[f'doc:{doc}'] = 'Pass' if p.exists() else 'Fail(missing)'
+        if p.is_file():
+            results[f'doc:{doc}'] = 'Pass'
+        elif p.exists():
+            results[f'doc:{doc}'] = 'Fail(exists but is not a file)'
+            docs_ok = False
+        else:
+            results[f'doc:{doc}'] = 'Fail(missing)'
+            docs_ok = False
 
-    # CLI versions
-    for cli in ('claude', 'codex'):
-        path = _get_cli_path(cli, config, overrides)
-        if not path:
-            results[f'cli:{cli}:version'] = 'Fail(not found)'
-            continue
-        try:
-            from _cli_helper import build_args, run_with_timeout
-            full_args = build_args(path, ['--version'])
-            rc, out, err = run_with_timeout(full_args, timeout_secs=timeout)
-            version_line = out.strip().splitlines()[0] if out.strip() else ''
-            if rc == 0 and version_line:
-                results[f'cli:{cli}:version'] = f'Pass({version_line})'
-            elif rc == 0 and not version_line:
-                results[f'cli:{cli}:version'] = 'Fail(--version returned empty output)'
-            else:
-                results[f'cli:{cli}:version'] = f'Fail(rc={rc})'
-        except ValueError as e:
-            results[f'cli:{cli}:version'] = f'Fail(shim resolution: {e})'
-        except FileNotFoundError:
-            results[f'cli:{cli}:version'] = 'Fail(executable not found)'
-        except subprocess.TimeoutExpired:
-            results[f'cli:{cli}:version'] = 'Fail(timeout)'
-        except Exception as e:
-            results[f'cli:{cli}:version'] = f'Fail({type(e).__name__})'
+    # CLI versions — skip entirely when config is invalid or required docs are missing
+    config_invalid = bool(config_errors)
+    if config_invalid or not docs_ok:
+        reason = 'invalid config' if config_invalid else 'missing required files'
+        for cli in ('claude', 'codex'):
+            results[f'cli:{cli}:version'] = f'NotRun({reason} — fix errors above first)'
+    else:
+        for cli in ('claude', 'codex'):
+            path = _get_cli_path(cli, config, overrides)
+            if not path:
+                results[f'cli:{cli}:version'] = 'Fail(not found)'
+                continue
+            try:
+                from _cli_helper import build_args, run_with_timeout
+                full_args = build_args(path, ['--version'])
+                rc, out, err = run_with_timeout(full_args, timeout_secs=timeout)
+                version_line = out.strip().splitlines()[0] if out.strip() else ''
+                if rc == 0 and version_line:
+                    results[f'cli:{cli}:version'] = f'Pass({version_line})'
+                elif rc == 0 and not version_line:
+                    results[f'cli:{cli}:version'] = 'Fail(--version returned empty output)'
+                else:
+                    results[f'cli:{cli}:version'] = f'Fail(rc={rc})'
+            except ValueError as e:
+                results[f'cli:{cli}:version'] = f'Fail(shim resolution: {e})'
+            except FileNotFoundError:
+                results[f'cli:{cli}:version'] = 'Fail(executable not found)'
+            except subprocess.TimeoutExpired:
+                results[f'cli:{cli}:version'] = 'Fail(timeout)'
+            except Exception as e:
+                results[f'cli:{cli}:version'] = f'Fail({type(e).__name__})'
 
-    # Rule hash
+    # Rule hash — guard is_file before hashing
     workflow = root / WORKFLOW_DOC
-    if workflow.exists():
+    if workflow.is_file():
         actual_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
         stored_hash = config.get('rule_hash', '')
         if not stored_hash:
@@ -193,6 +236,8 @@ def _run_preflight(root, config, config_errors, overrides, timeouts):
             results['rule_hash'] = (
                 f'Fail(mismatch: stored={stored_hash} actual={actual_hash})'
             )
+    elif workflow.exists():
+        results['rule_hash'] = 'Fail(workflow path exists but is not a file)'
     else:
         results['rule_hash'] = 'Fail(workflow doc missing)'
 
@@ -207,9 +252,19 @@ def _run_live(root, config, overrides, timeouts):
     results = {}
     logs = {}
     timeout = _get_timeout(timeouts, 'live_secs', 180)
-    rule_hash = hashlib.sha256(
-        (root / WORKFLOW_DOC).read_bytes()
-    ).hexdigest()[:16]
+
+    workflow = root / WORKFLOW_DOC
+    rule_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
+
+    context_script = root / 'scripts' / 'probe_context.py'
+    if not context_script.is_file():
+        for cli in ('claude', 'codex'):
+            results[f'live:{cli}'] = 'Fail(probe_context.py missing)'
+        return results, logs
+
+    from _probe import make_context_cmd_str, probe_env, invoke_cli
+    from _protocol import decode, validate_payload
+    from _cli_helper import build_args, run_with_timeout
 
     for cli in ('claude', 'codex'):
         nonce = secrets.token_hex(12)
@@ -218,33 +273,40 @@ def _run_live(root, config, overrides, timeouts):
             results[f'live:{cli}'] = 'NotRun(CLI not found)'
             continue
 
+        ctx_cmd_str, _ctx_args = make_context_cmd_str(root, context_script, nonce)
+
         try:
-            from _cli_helper import build_args, run_with_timeout
             if cli == 'claude':
-                prompt = _make_live_prompt_claude(nonce)
-                full_args = build_args(path, [
+                prompt = _make_live_prompt_claude(nonce, ctx_cmd_str)
+                user_args = [
                     '-p', prompt,
-                    '--output-format', 'json',
-                    '--allowedTools', 'Bash',
-                ])
+                    '--effort', 'low',
+                    '--tools', 'Read,Bash',
+                    '--allowedTools', 'Read,Bash',
+                    '--output-format', 'stream-json',
+                    '--verbose',
+                ]
+                run_env = probe_env(os.environ, depth=0)
+                rc, out, err = invoke_cli(cli, path, user_args, root, timeout, env=run_env)
             else:
-                prompt = _make_live_prompt_codex(nonce)
-                full_args = build_args(path, [
-                    'exec',
-                    '--json',
+                prompt = _make_live_prompt_codex(nonce, ctx_cmd_str)
+                user_args = [
+                    'exec', '--json',
                     '--sandbox', 'read-only',
                     '--cd', str(root),
                     '--skip-git-repo-check',
                     prompt,
-                ])
-
-            rc, out, err = run_with_timeout(full_args, timeout_secs=timeout,
-                                            cwd=str(root))
+                ]
+                run_env = probe_env(os.environ, depth=0)
+                rc, out, err = invoke_cli(cli, path, user_args, root, timeout, env=run_env)
         except ValueError as e:
             results[f'live:{cli}'] = f'Fail(shim resolution: {e})'
             continue
         except subprocess.TimeoutExpired:
             results[f'live:{cli}'] = 'Fail(timeout)'
+            continue
+        except OSError as e:
+            results[f'live:{cli}'] = f'Fail(OSError: {e})'
             continue
         except Exception as e:
             results[f'live:{cli}'] = f'Fail({type(e).__name__}: {e})'
@@ -253,215 +315,55 @@ def _run_live(root, config, overrides, timeouts):
         logs[f'live:{cli}:stdout'] = out
         logs[f'live:{cli}:stderr'] = err
 
-        status, model_session_id = _parse_live_response(
-            cli, rc, out, nonce, str(root), rule_hash
-        )
-        results[f'live:{cli}'] = status
-        if model_session_id:
-            results[f'live:{cli}:session_id'] = model_session_id
+        # Decode and validate
+        try:
+            inner, session_id = decode(cli, rc, out)
+        except ValueError as exc:
+            results[f'live:{cli}'] = f'Fail(decode: {exc})'
+            continue
+
+        if inner.get('nonce') != nonce:
+            results[f'live:{cli}'] = 'Fail(nonce mismatch or missing)'
+            continue
+
+        # root must be absolute — do NOT normalize '.' to expected root
+        got_root = inner.get('root', '')
+        if not got_root or not pathlib.Path(str(got_root)).is_absolute():
+            results[f'live:{cli}'] = f'Fail(root missing or not absolute: {got_root!r})'
+            continue
+
+        try:
+            validate_payload(inner, {'root': str(root), 'rule_hash': rule_hash})
+        except ValueError as exc:
+            results[f'live:{cli}'] = f'Fail({exc})'
+            continue
+
+        results[f'live:{cli}'] = f'Pass(session_id={session_id})'
+        results[f'live:{cli}:session_id'] = session_id
 
     return results, logs
 
 
-def _make_live_prompt_claude(nonce):
+def _make_live_prompt_claude(nonce, ctx_cmd_str):
     return (
-        f'You are a connectivity probe. '
-        f'Use Bash to run: python -c "import hashlib, pathlib; '
-        f'p=pathlib.Path(\'docs/ai-collaboration-workflow.md\'); '
-        f'print(hashlib.sha256(p.read_bytes()).hexdigest()[:16])" '
-        f'to get rule_hash, and: python -c "import pathlib; print(str(pathlib.Path(\'.\').resolve()))" '
-        f'to get root. '
-        f'Return ONLY this JSON, nothing else: '
-        f'{{"nonce":"{nonce}","root":"<absolute root>","rule_hash":"<computed>"}}'
+        f'You are a connectivity probe. Do not delegate to agents or call other CLIs. '
+        f'Use Bash to run this exact command and capture its JSON output:\n'
+        f'  {ctx_cmd_str}\n'
+        f'Return ONLY the JSON object from that command as your entire response. '
+        f'Do not add any other text, explanation, or wrapping. '
+        f'The expected nonce is {nonce!r} — do not supply expected hash or root yourself; '
+        f'run the command and return its output verbatim as JSON.'
     )
 
 
-def _make_live_prompt_codex(nonce):
+def _make_live_prompt_codex(nonce, ctx_cmd_str):
     return (
-        f'Connectivity probe. '
-        f'Read docs/ai-collaboration-workflow.md. '
-        f'Compute its SHA-256 (first 16 lowercase hex chars). '
-        f'Return ONLY this JSON: '
-        f'{{"nonce":"{nonce}","root":"<absolute project root>","rule_hash":"<computed>"}}'
+        f'Connectivity probe. Do NOT delegate or call other CLIs. '
+        f'Run this command: {ctx_cmd_str}\n'
+        f'Return ONLY the JSON object it prints. '
+        f'Expected nonce: {nonce!r}. Compute all values by running the command, '
+        f'do not fabricate hash or root.'
     )
-
-
-def _parse_live_response(cli, rc, raw_out, nonce, expected_root, expected_hash):
-    """
-    Validate a live CLI response.
-
-    Returns (status_string, session_id_or_None).
-    Rejects empty, malformed, error-state, or missing-nonce responses.
-    Requires exact nonce match; reports root/hash mismatches distinctly.
-    """
-    if not raw_out or not raw_out.strip():
-        return 'Fail(empty response)', None
-
-    if cli == 'claude':
-        return _parse_claude_output(rc, raw_out, nonce, expected_root, expected_hash)
-    if cli == 'codex':
-        return _parse_codex_output(rc, raw_out, nonce, expected_root, expected_hash)
-
-    return 'Fail(unknown CLI)', None
-
-
-def _parse_claude_output(rc, raw_out, nonce, expected_root, expected_hash):
-    """
-    Validate Claude --output-format json envelope.
-
-    Required: type=result, subtype=success, is_error=false, session_id present.
-    Required: result field parseable as JSON with matching nonce, root, rule_hash.
-    """
-    if rc != 0:
-        return f'Fail(rc={rc})', None
-
-    try:
-        data = json.loads(raw_out.strip())
-    except json.JSONDecodeError:
-        return 'Fail(malformed JSON — not a valid Claude envelope)', None
-
-    if not isinstance(data, dict):
-        return 'Fail(unexpected JSON type — expected object)', None
-
-    # Reject error responses
-    if data.get('type') == 'result' and data.get('subtype') in ('error', 'turn.failed'):
-        return f'Fail(subtype={data.get("subtype")})', None
-    if data.get('is_error'):
-        return f'Fail(is_error=true: {data.get("error", "")})', None
-
-    # Require type=result, subtype=success
-    if data.get('type') != 'result':
-        return f'Fail(type={data.get("type")!r} expected "result")', None
-    if data.get('subtype') != 'success':
-        return f'Fail(subtype={data.get("subtype")!r} expected "success")', None
-
-    # Require session_id
-    session_id = data.get('session_id', '')
-    if not session_id:
-        return 'Fail(session_id missing or empty)', None
-
-    # Parse result field as JSON
-    result_text = data.get('result', '')
-    if not result_text:
-        return 'Fail(result field missing or empty)', None
-
-    try:
-        inner = json.loads(result_text) if isinstance(result_text, str) else result_text
-    except json.JSONDecodeError:
-        return 'Fail(result field is not valid JSON)', None
-
-    if not isinstance(inner, dict):
-        return 'Fail(result JSON is not an object)', None
-
-    # Validate nonce (required exact match)
-    if inner.get('nonce') != nonce:
-        return f'Fail(nonce mismatch or missing in result)', None
-
-    # Report root/hash mismatches separately (informational — model may normalize paths)
-    warnings = []
-    if inner.get('root') != expected_root:
-        warnings.append(f'root_mismatch(got={inner.get("root")!r})')
-    if inner.get('rule_hash') != expected_hash:
-        warnings.append(f'rule_hash_mismatch(got={inner.get("rule_hash")!r} expected={expected_hash})')
-
-    if warnings:
-        return f'Fail({"; ".join(warnings)})', session_id
-
-    return f'Pass(session_id={session_id})', session_id
-
-
-def _parse_codex_output(rc, raw_out, nonce, expected_root, expected_hash):
-    """
-    Validate Codex --json JSONL output.
-
-    Required: rc=0, session_id or thread_id present, turn.completed event,
-    item.completed with item.type=agent_message containing nonce.
-    Rejects: turn.failed, error-type events, malformed or empty JSONL.
-    """
-    if rc != 0:
-        return f'Fail(rc={rc})', None
-
-    lines = [l.strip() for l in raw_out.splitlines() if l.strip()]
-    if not lines:
-        return 'Fail(empty JSONL response)', None
-
-    has_turn_completed = False
-    has_agent_message = False
-    nonce_found = False
-    inner_text = None
-    session_id = None
-
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            # Malformed JSONL line — continue scanning but do not credit nonce
-            continue
-
-        if not isinstance(obj, dict):
-            continue
-
-        t = obj.get('type', '')
-
-        # Hard failure on error events
-        if t in ('turn.failed', 'error'):
-            return f'Fail(error event: type={t!r} msg={obj.get("message", obj.get("error", ""))})', None
-
-        # Collect session/thread IDs
-        for id_field in ('session_id', 'thread_id'):
-            v = obj.get(id_field, '')
-            if v and not session_id:
-                session_id = v
-
-        if t == 'turn.completed':
-            has_turn_completed = True
-
-        if t == 'item.completed':
-            item = obj.get('item', {})
-            if item.get('type') == 'agent_message':
-                has_agent_message = True
-                # Extract text from content list
-                content = item.get('content', [])
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get('type') == 'text':
-                            text = block.get('text', '')
-                            inner_text = text
-                            if nonce in text:
-                                nonce_found = True
-                elif isinstance(content, str) and nonce in content:
-                    inner_text = content
-                    nonce_found = True
-
-    if not has_turn_completed:
-        return 'Fail(turn.completed event not found in JSONL)', None
-    if not has_agent_message:
-        return 'Fail(no item.completed with type=agent_message found)', None
-    if not nonce_found:
-        return 'Fail(nonce not found in agent_message content)', None
-    if not session_id:
-        return 'Fail(no session_id or thread_id in JSONL output)', None
-
-    # Validate inner JSON for root/hash if present
-    warnings = []
-    if inner_text:
-        try:
-            inner = json.loads(inner_text)
-            if isinstance(inner, dict):
-                if inner.get('root') != expected_root:
-                    warnings.append(f'root_mismatch(got={inner.get("root")!r})')
-                if inner.get('rule_hash') != expected_hash:
-                    warnings.append(
-                        f'rule_hash_mismatch(got={inner.get("rule_hash")!r} '
-                        f'expected={expected_hash})'
-                    )
-        except json.JSONDecodeError:
-            pass  # Text wasn't JSON — nonce was found in raw text, acceptable
-
-    if warnings:
-        return f'Fail({"; ".join(warnings)})', session_id
-
-    return f'Pass(session_id={session_id})', session_id
 
 
 # ---------------------------------------------------------------------------
@@ -469,24 +371,20 @@ def _parse_codex_output(rc, raw_out, nonce, expected_root, expected_hash):
 # ---------------------------------------------------------------------------
 
 def _run_bidirectional(root, config, overrides, timeouts):
-    """
-    Invoke outer model (Claude or Codex) with a task to run probe_peer.py.
-
-    The outer model must show tool_use evidence of invoking probe_peer.py.
-    The inner evidence artifact is written by probe_peer.py and validated here.
-
-    Outer nonce: proves outer model responded.
-    Inner nonce: proves inner probe ran and inner CLI responded.
-    """
     results = {}
     logs = {}
     timeout = _get_timeout(timeouts, 'live_secs', 180)
 
     probe_script = root / 'scripts' / 'probe_peer.py'
-    if not probe_script.exists():
+    if not probe_script.is_file():
         results['bidirectional:claude-to-codex'] = 'Fail(probe_peer.py missing)'
         results['bidirectional:codex-to-claude'] = 'Fail(probe_peer.py missing)'
         return results, logs
+
+    from _probe import make_probe_peer_cmd_str, probe_env, invoke_cli
+
+    report_dir = root / 'reports' / 'connection_reports'
+    report_dir.mkdir(parents=True, exist_ok=True)
 
     for direction in ('claude-to-codex', 'codex-to-claude'):
         outer_cli = 'claude' if direction == 'claude-to-codex' else 'codex'
@@ -500,48 +398,44 @@ def _run_bidirectional(root, config, overrides, timeouts):
 
         outer_nonce = secrets.token_hex(12)
         inner_nonce = secrets.token_hex(12)
-        report_dir = root / 'reports' / 'connection_reports'
-        report_dir.mkdir(parents=True, exist_ok=True)
 
-        probe_cmd = (
-            f'{sys.executable} {probe_script} '
-            f'--direction {direction} --nonce {inner_nonce} --root {root}'
+        # Build safe command string that the outer model must run
+        peer_cmd_str, _peer_args = make_probe_peer_cmd_str(
+            root, probe_script, direction, inner_nonce
         )
-        outer_prompt = _make_bidi_prompt(direction, outer_nonce, inner_nonce, probe_cmd)
 
-        env = os.environ.copy()
-        env[_RECURSION_ENV] = '1'
+        outer_prompt = _make_bidi_prompt(direction, outer_nonce, inner_nonce, peer_cmd_str)
+
+        # depth=1 for outer — signals it may call one helper
+        run_env = probe_env(os.environ, depth=1)
 
         try:
-            from _cli_helper import build_args, run_with_timeout
             if outer_cli == 'claude':
-                full_args = build_args(outer_path, [
+                user_args = [
                     '-p', outer_prompt,
-                    '--output-format', 'json',
-                    '--allowedTools', 'Bash',
-                    '--max-turns', '3',
-                ])
+                    '--effort', 'low',
+                    '--tools', 'Read,Bash',
+                    '--allowedTools', 'Read,Bash',
+                    '--output-format', 'stream-json',
+                    '--verbose',
+                ]
             else:
-                full_args = build_args(outer_path, [
-                    'exec',
-                    '--json',
-                    '--sandbox', 'workspace',
+                user_args = [
+                    'exec', '--json',
+                    '--sandbox', 'workspace-write',
                     '--cd', str(root),
                     '--skip-git-repo-check',
                     outer_prompt,
-                ])
-
-            rc, out, err = run_with_timeout(
-                full_args,
-                timeout_secs=timeout,
-                cwd=str(root),
-                env=env,
-            )
+                ]
+            rc, out, err = invoke_cli(outer_cli, outer_path, user_args, root, timeout, env=run_env)
         except ValueError as e:
             results[f'bidirectional:{direction}'] = f'Fail(shim resolution: {e})'
             continue
         except subprocess.TimeoutExpired:
             results[f'bidirectional:{direction}'] = 'Fail(timeout)'
+            continue
+        except OSError as e:
+            results[f'bidirectional:{direction}'] = f'Fail(OSError: {e})'
             continue
         except Exception as e:
             results[f'bidirectional:{direction}'] = f'Fail({type(e).__name__}: {e})'
@@ -550,116 +444,274 @@ def _run_bidirectional(root, config, overrides, timeouts):
         logs[f'bidirectional:{direction}:stdout'] = out
         logs[f'bidirectional:{direction}:stderr'] = err
 
-        # Verify outer nonce in outer response
-        outer_nonce_found = outer_nonce in out
+        # Decode outer response
+        from _protocol import decode, validate_payload
+        try:
+            outer_payload, outer_session = decode(outer_cli, rc, out)
+        except ValueError as exc:
+            results[f'bidirectional:{direction}'] = f'Fail(outer decode: {exc})'
+            continue
 
-        # Verify outer model showed tool_use for probe_peer invocation
-        tool_evidence = _check_outer_tool_evidence(outer_cli, out, probe_script)
+        # Validate outer nonce and required fields
+        try:
+            validate_payload(outer_payload, {
+                'outer_nonce': outer_nonce,
+                'inner_nonce': inner_nonce,
+                'direction': direction,
+            })
+        except ValueError as exc:
+            results[f'bidirectional:{direction}'] = f'Fail(outer payload: {exc})'
+            continue
 
-        # Read and validate inner evidence artifact
-        artifact = report_dir / f'probe_{direction}_{inner_nonce}.json'
-        if not artifact.exists():
-            if not outer_nonce_found:
-                results[f'bidirectional:{direction}'] = (
-                    f'Fail(outer nonce not found; inner artifact not written — '
-                    f'outer model did not invoke probe_peer)'
-                )
-            else:
-                results[f'bidirectional:{direction}'] = (
-                    'NotVerified(outer responded but inner artifact not written — '
-                    'outer model may not have invoked probe_peer as a tool)'
-                )
+        if outer_payload.get('tool_used') is not True:
+            results[f'bidirectional:{direction}'] = 'Fail(outer payload tool_used != true)'
+            continue
+
+        # Verify real tool_use event in raw stream
+        tool_evidence, tool_detail = _check_outer_tool_evidence(
+            outer_cli, out, peer_cmd_str, inner_nonce
+        )
+
+        # Read and validate inner evidence artifact written by probe_peer.py
+        artifact_path = report_dir / f'probe_{direction}_{inner_nonce}.json'
+        if not artifact_path.exists():
+            status = 'Fail(inner artifact not written'
+            if not tool_evidence:
+                status += f'; no tool evidence — {tool_detail}'
+            status += ')'
+            results[f'bidirectional:{direction}'] = status
             continue
 
         try:
-            evidence = json.loads(artifact.read_text('utf-8'))
+            artifact = json.loads(artifact_path.read_text('utf-8'))
         except Exception as e:
             results[f'bidirectional:{direction}'] = f'Fail(bad artifact: {e})'
             continue
 
-        status = _validate_bidi_evidence(
-            evidence, inner_nonce, direction, tool_evidence, outer_nonce_found
+        # Validate artifact fields
+        status = _validate_bidi_artifact(
+            artifact, inner_nonce, direction, str(root), outer_session,
+            tool_evidence, tool_detail, out
         )
         results[f'bidirectional:{direction}'] = status
+
+        # Store session IDs as metadata (not status checks); keys ending :session_id are excluded from pass/fail counts
+        results[f'bidirectional:{direction}:outer:session_id'] = outer_session
+        inner_session = artifact.get('inner_session_id', '') if isinstance(artifact, dict) else ''
+        if inner_session:
+            results[f'bidirectional:{direction}:inner:session_id'] = inner_session
 
     return results, logs
 
 
-def _make_bidi_prompt(direction, outer_nonce, inner_nonce, probe_cmd):
+def _make_bidi_prompt(direction, outer_nonce, inner_nonce, peer_cmd_str):
     return (
-        f'CONNECTIVITY PROBE — depth=1, NO_DELEGATION. '
-        f'Invoke the bounded peer probe script exactly once using Bash. '
-        f'Command: {probe_cmd} '
-        f'Do NOT invoke check_connection.py or probe_peer.py again. '
-        f'After Bash completes, return ONLY: '
+        f'CONNECTIVITY PROBE depth=1. '
+        f'You are authorized to run exactly ONE Bash command — the bounded peer probe below. '
+        f'Do NOT invoke check_connection.py, do NOT call probe_peer.py again, '
+        f'do NOT spawn agents or delegate further. '
+        f'Run this command exactly once using Bash:\n'
+        f'  {peer_cmd_str}\n'
+        f'After Bash completes, return ONLY this JSON as your entire response '
+        f'(substitute nothing — use these literal values):\n'
         f'{{"outer_nonce":"{outer_nonce}","inner_nonce":"{inner_nonce}",'
         f'"direction":"{direction}","tool_used":true}}'
     )
 
 
-def _check_outer_tool_evidence(outer_cli, out, probe_script):
+def _check_outer_tool_evidence(outer_cli, out, expected_cmd_str, inner_nonce):
     """
-    Check whether the outer model's output contains evidence of invoking probe_peer.py.
-    Returns True if tool_use evidence is found, False otherwise.
-    """
-    probe_name = probe_script.name  # 'probe_peer.py'
+    Verify the outer model actually invoked the peer probe via a real tool event.
 
+    For Claude stream-json:
+      - Finds assistant event with message.content tool_use name=Bash whose
+        input.command matches expected_cmd_str (strip whitespace).
+      - Then finds user event with message.content tool_result for that
+        tool_use_id with no is_error/interrupted/failed exit status.
+      - Requires actual nested events; never falls back to final-text.
+    For Codex JSONL:
+      - Finds item.completed with item.type=command_execution, exit_code=0,
+        status=completed, and expected_cmd_str is a substring of the executed command
+        (Codex may wrap it in a powershell -Command invocation).
+      - Rejects echo/Write-Output of nonce or expected text, started-only, failed.
+
+    All malformed/non-object lines cause immediate failure.
+
+    Returns (bool, detail_str).
+    """
     if outer_cli == 'claude':
-        try:
-            data = json.loads(out.strip())
-            if isinstance(data, dict):
-                # Check for tool_use in result content or type indicators
-                result = data.get('result', '')
-                if 'tool_used' in result and probe_name in out:
-                    return True
-                # Check raw output for Bash tool invocation
-                if probe_name in out:
-                    return True
-        except (json.JSONDecodeError, AttributeError):
-            pass
-        return probe_name in out
-
+        return _claude_tool_evidence(out, expected_cmd_str)
     if outer_cli == 'codex':
-        # In JSONL output, look for item with type=bash_output or similar tool event
-        for line in out.splitlines():
-            try:
-                obj = json.loads(line)
-                t = obj.get('type', '')
-                if t in ('item.completed', 'item.started'):
-                    item = obj.get('item', {})
-                    item_type = item.get('type', '')
-                    if item_type in ('bash', 'tool_use', 'function_call'):
-                        content = str(item.get('content', '') or item.get('input', ''))
-                        if probe_name in content:
-                            return True
-            except json.JSONDecodeError:
-                pass
-        return probe_name in out
-
-    return False
+        return _codex_tool_evidence(out, expected_cmd_str)
+    return False, 'unknown outer CLI'
 
 
-def _validate_bidi_evidence(evidence, inner_nonce, direction, tool_evidence, outer_nonce_found):
-    """Validate the inner evidence artifact from probe_peer.py."""
-    required = ('status', 'direction', 'nonce', 'rc')
-    missing = [f for f in required if f not in evidence]
+def _claude_tool_evidence(out, expected_cmd_str):
+    """Parse Claude stream-json events for real Bash tool_use + tool_result."""
+    expected_cmd = expected_cmd_str.strip()
+    events = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return False, f'malformed JSON line in stream: {line[:80]!r}'
+        if not isinstance(obj, dict):
+            return False, f'non-object line in stream: {line[:80]!r}'
+        events.append(obj)
+
+    # Find tool_use in assistant event.message.content (real nested structure)
+    bash_tool_use_id = None
+    for ev in events:
+        # Real stream-json: event has 'message' key with role/content
+        msg = ev.get('message')
+        if isinstance(msg, dict):
+            content = msg.get('content', [])
+            if isinstance(content, list):
+                for block in content:
+                    if (isinstance(block, dict)
+                            and block.get('type') == 'tool_use'
+                            and block.get('name') == 'Bash'):
+                        cmd = block.get('input', {}).get('command', '').strip()
+                        if cmd == expected_cmd:
+                            bash_tool_use_id = block.get('id')
+                            break
+        if bash_tool_use_id:
+            break
+
+    if not bash_tool_use_id:
+        return False, (
+            f'no Bash tool_use event with expected command found; '
+            f'expected={expected_cmd!r}'
+        )
+
+    # Find matching tool_result in user event.message.content
+    for ev in events:
+        msg = ev.get('message')
+        if isinstance(msg, dict):
+            content = msg.get('content', [])
+            if isinstance(content, list):
+                for block in content:
+                    if (isinstance(block, dict)
+                            and block.get('type') == 'tool_result'
+                            and block.get('tool_use_id') == bash_tool_use_id):
+                        if block.get('is_error') is True:
+                            return False, (
+                                f'Bash tool_result for id={bash_tool_use_id} has is_error=true'
+                            )
+                        return True, f'tool_use_id={bash_tool_use_id}'
+
+    return False, f'no tool_result found for tool_use_id={bash_tool_use_id}'
+
+
+def _codex_tool_evidence(out, expected_cmd_str):
+    """Parse Codex JSONL for item.completed command_execution matching expected command."""
+    expected_cmd = expected_cmd_str.strip()
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return False, f'malformed JSON line in JSONL: {line[:80]!r}'
+        if not isinstance(obj, dict):
+            return False, f'non-object line in JSONL: {line[:80]!r}'
+        if obj.get('type') == 'item.completed':
+            item = obj.get('item', {})
+            if (isinstance(item, dict)
+                    and item.get('type') == 'command_execution'
+                    and item.get('exit_code') == 0
+                    and item.get('status') == 'completed'):
+                cmd = item.get('command', '')
+                # Codex may wrap expected command in a powershell -Command invocation;
+                # expected command must appear as a substring of the executed command.
+                if expected_cmd and expected_cmd in cmd:
+                    return True, f'command_execution exit_code=0 cmd contains expected command'
+    return False, (
+        f'no item.completed command_execution exit_code=0 with expected command; '
+        f'expected={expected_cmd!r}'
+    )
+
+
+def _validate_bidi_artifact(artifact, inner_nonce, direction, expected_root,
+                             outer_session_id, tool_evidence, tool_detail, outer_raw_stdout):
+    """Full validation of the probe_peer.py evidence artifact."""
+    if not isinstance(artifact, dict):
+        return 'Fail(artifact is not a JSON object)'
+
+    required = ('status', 'direction', 'nonce', 'rc', 'root', 'rule_hash',
+                'inner_session_id', 'target_cli', 'raw_inner_stdout')
+    missing = [f for f in required if f not in artifact]
     if missing:
-        return f'Fail(evidence missing fields: {missing})'
+        return f'Fail(artifact missing fields: {missing})'
 
-    if evidence.get('nonce') != inner_nonce:
+    if artifact.get('status') != 'Pass':
+        return f'Fail(inner probe status={artifact.get("status")})'
+
+    rc = artifact.get('rc')
+    if isinstance(rc, bool) or not isinstance(rc, int) or rc != 0:
+        return f'Fail(inner rc={rc!r}; expected int 0, not bool)'
+
+    if artifact.get('nonce') != inner_nonce:
         return 'Fail(inner nonce mismatch in artifact)'
-    if evidence.get('direction') != direction:
-        return f'Fail(direction mismatch in artifact: {evidence.get("direction")})'
-    if evidence.get('status') != 'Pass':
-        return f'Fail(inner probe status={evidence.get("status")})'
-    if evidence.get('rc') != 0:
-        return f'Fail(inner rc={evidence.get("rc")})'
+
+    if artifact.get('direction') != direction:
+        return f'Fail(direction mismatch: {artifact.get("direction")})'
+
+    expected_target = 'codex' if direction == 'claude-to-codex' else 'claude'
+    if artifact.get('target_cli') != expected_target:
+        return f'Fail(target_cli mismatch: got {artifact.get("target_cli")!r} expected {expected_target!r})'
+
+    # root must be absolute and match expected
+    art_root = artifact.get('root', '')
+    if not art_root or not pathlib.Path(str(art_root)).is_absolute():
+        return f'Fail(artifact root not absolute: {art_root!r})'
+    try:
+        if pathlib.Path(str(art_root)).resolve() != pathlib.Path(expected_root).resolve():
+            return f'Fail(artifact root mismatch: {art_root!r})'
+    except OSError as e:
+        return f'Fail(cannot resolve artifact root: {e})'
+
+    inner_session = artifact.get('inner_session_id', '')
+    if not isinstance(inner_session, str) or not inner_session:
+        return 'Fail(artifact inner_session_id missing or empty)'
+
+    # Compute expected rule_hash from expected_root's workflow
+    try:
+        workflow = pathlib.Path(expected_root) / 'docs/ai-collaboration-workflow.md'
+        if workflow.is_file():
+            expected_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
+            if artifact.get('rule_hash') != expected_hash:
+                return (
+                    f'Fail(artifact rule_hash mismatch: '
+                    f'got={artifact.get("rule_hash")!r} expected={expected_hash!r})'
+                )
+    except OSError as e:
+        return f'Fail(cannot compute rule_hash for validation: {e})'
+
+    # raw_inner_stdout must be a nonempty string
+    raw_inner = artifact.get('raw_inner_stdout')
+    if not isinstance(raw_inner, str) or not raw_inner:
+        return 'Fail(artifact raw_inner_stdout missing or empty)'
+
+    # Re-decode raw_inner_stdout and validate nonce, root, rule_hash, direction, session
+    inner_cli = 'codex' if direction == 'claude-to-codex' else 'claude'
+    try:
+        from _protocol import decode as _decode
+        re_inner, re_session = _decode(inner_cli, 0, raw_inner)
+    except ValueError as exc:
+        return f'Fail(re-decode of raw_inner_stdout: {exc})'
+
+    if re_session != inner_session:
+        return f'Fail(re-decoded inner session mismatch: {re_session!r} != {inner_session!r})'
+    if re_inner.get('nonce') != inner_nonce:
+        return f'Fail(re-decoded inner nonce mismatch: {re_inner.get("nonce")!r})'
 
     if not tool_evidence:
-        return (
-            f'NotVerified(inner artifact valid but outer model tool_use evidence '
-            f'not found — cannot confirm outer model invoked probe_peer)'
-        )
+        return f'NotVerified(artifact valid but outer tool event not found: {tool_detail})'
 
     return 'Pass'
 
@@ -669,16 +721,38 @@ def _validate_bidi_evidence(evidence, inner_nonce, direction, tool_evidence, out
 # ---------------------------------------------------------------------------
 
 def _build_report(session_id, timestamp, root, config, results, live, bidirectional):
-    total = len(results)
-    passed = sum(1 for v in results.values() if str(v).startswith('Pass'))
-    failed = sum(1 for v in results.values() if str(v).startswith('Fail'))
-    not_run = total - passed - failed
-
-    # Collect model session IDs separately
+    # Separate metadata (session_id) from actual checks
     model_session_ids = {
         k: v for k, v in results.items() if k.endswith(':session_id')
     }
     check_results = {k: v for k, v in results.items() if not k.endswith(':session_id')}
+
+    passed = sum(1 for v in check_results.values() if str(v).startswith('Pass'))
+    failed = sum(1 for v in check_results.values() if str(v).startswith('Fail'))
+    not_verified = sum(1 for v in check_results.values() if str(v).startswith('NotVerified'))
+    not_run = sum(1 for v in check_results.values() if str(v).startswith('NotRun'))
+
+    overall_fail = failed > 0
+    overall_not_verified = (not overall_fail) and (not_verified > 0)
+    requested_not_run = (not overall_fail) and (not overall_not_verified) and (
+        (live and any(
+            k.startswith('live:') and str(v).startswith('NotRun')
+            for k, v in check_results.items()
+        ))
+        or (bidirectional and any(
+            k.startswith('bidirectional:') and str(v).startswith('NotRun')
+            for k, v in check_results.items()
+        ))
+    )
+
+    if overall_fail:
+        overall = 'Fail'
+    elif overall_not_verified:
+        overall = 'NotVerified'
+    elif requested_not_run:
+        overall = 'NotRun'
+    else:
+        overall = 'Pass'
 
     return {
         'run_id': session_id,
@@ -699,9 +773,10 @@ def _build_report(session_id, timestamp, root, config, results, live, bidirectio
             'total': len(check_results),
             'pass': passed,
             'fail': failed,
+            'not_verified': not_verified,
             'not_run': not_run,
         },
-        'overall': 'Pass' if failed == 0 else 'Fail',
+        'overall': overall,
     }
 
 
@@ -709,11 +784,9 @@ def _save_report(root, session_id, report, raw_logs):
     report_dir = root / 'reports' / 'connection_reports'
     report_dir.mkdir(parents=True, exist_ok=True)
 
-    # Main structured report
     path = report_dir / f'check_{session_id}.json'
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8')
 
-    # Raw stdout/stderr for diagnosis (separate file)
     if raw_logs:
         logs_path = report_dir / f'check_{session_id}_raw.json'
         logs_path.write_text(
@@ -747,64 +820,39 @@ def _resolve_root(explicit_root):
 
 def _load_config(root):
     """
-    Load .collaboration/local.json.
+    Load .collaboration/local.json using the shared validated loader.
 
     Returns (config_dict, error_list).
     error_list entries: {'key': str, 'msg': str}
-
-    Missing config file → empty config (fresh install), no errors.
-    Corrupt/non-object JSON → empty config plus error entry.
     """
-    config_file = root / '.collaboration' / 'local.json'
-    if not config_file.exists():
-        return {}, []
-
+    from _project import load_config as _shared_load
     try:
-        text = config_file.read_text(encoding='utf-8')
+        config = _shared_load(root)
+        return config, []
+    except ValueError as e:
+        msg = str(e)
+        if 'config not found' in msg:
+            key = 'missing'
+            user_msg = f'{msg} — run: python scripts/init_project.py'
+        elif 'malformed JSON' in msg or 'cannot read' in msg:
+            key = 'parse'
+            user_msg = msg
+        else:
+            key = 'invalid'
+            user_msg = msg
+        safe_config = {
+            'timeouts': {'preflight_secs': 15, 'live_secs': 180},
+            'cli': {},
+            'overrides': {},
+        }
+        return safe_config, [{'key': key, 'msg': user_msg}]
     except OSError as e:
-        return {}, [{'key': 'read', 'msg': f'OSError reading config: {e}'}]
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        return {}, [{'key': 'parse', 'msg': f'Malformed JSON in .collaboration/local.json: {e}'}]
-
-    if not isinstance(data, dict):
-        return {}, [{'key': 'type', 'msg': 'Config is not a JSON object'}]
-
-    errors = []
-
-    # Validate stored root matches current root
-    stored_root_str = data.get('root', '')
-    if stored_root_str:
-        try:
-            stored_root = pathlib.Path(stored_root_str).resolve()
-            if stored_root != root.resolve():
-                errors.append({
-                    'key': 'root_mismatch',
-                    'msg': (
-                        f'Config root={stored_root!r} does not match '
-                        f'current root={root.resolve()!r}. '
-                        f'Delete .collaboration/local.json and re-run init_project.py.'
-                    )
-                })
-        except (ValueError, OSError):
-            errors.append({'key': 'root_invalid', 'msg': f'Stored root is invalid: {stored_root_str!r}'})
-
-    # Validate timeout field types if present
-    timeouts = data.get('timeouts', {})
-    if not isinstance(timeouts, dict):
-        errors.append({'key': 'timeouts_type', 'msg': 'timeouts must be a JSON object'})
-
-    # Validate env_depth override field if present
-    env_depth = data.get('env_depth')
-    if env_depth is not None and not _is_finite_positive_number(env_depth):
-        errors.append({
-            'key': 'env_depth',
-            'msg': f'env_depth must be a finite positive number, got {env_depth!r}'
-        })
-
-    return data, errors
+        safe_config = {
+            'timeouts': {'preflight_secs': 15, 'live_secs': 180},
+            'cli': {},
+            'overrides': {},
+        }
+        return safe_config, [{'key': 'oserror', 'msg': str(e)}]
 
 
 def _get_cli_path(cli, config, overrides):
@@ -826,7 +874,6 @@ def _get_timeout(timeouts, field, default):
 
 
 def _is_finite_positive_number(val):
-    """Return True iff val is a finite positive number (not bool, not NaN/Inf, not string)."""
     if isinstance(val, bool):
         return False
     if not isinstance(val, (int, float)):

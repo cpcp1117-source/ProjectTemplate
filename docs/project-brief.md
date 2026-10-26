@@ -1,5 +1,9 @@
 # Project Brief
 
+## Project ID
+
+TBD (e.g. PROJ-001)
+
 ## Project Name
 
 TBD
@@ -61,6 +65,34 @@ TBD (e.g. requirements, design review, verification, release docs)
 - No actor self-approval: Claude Code does not approve its own implementation; Codex does not modify implementation then approve it.
 - Both read `docs/ai-collaboration-workflow.md` before each task.
 - Timeout for each task defined in `tasks/current_task.md`.
+
+## Runtime / Environment
+
+TBD (e.g. Python 3.11+, Node 20+, OS requirements)
+
+## Setup / Run / Test Commands
+
+```bash
+# Setup
+TBD
+
+# Run
+TBD
+
+# Test
+python -X utf8 -m unittest tests/test_scripts.py -v
+```
+
+## Deployment Target / Rollback
+
+- Target: TBD (e.g. production server, container registry, GitHub Pages)
+- Rollback: TBD (e.g. revert to previous image tag, git revert + redeploy)
+
+## Monitoring
+
+- Scope: TBD (e.g. uptime, error rate, latency)
+- Interval: TBD (e.g. every 5 minutes)
+- Notification: TBD (e.g. email alert, Slack webhook)
 
 ## CLI Invocation Examples
 

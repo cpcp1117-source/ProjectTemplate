@@ -1,12 +1,28 @@
 {
   "baseline_commit": "22127c45e06076ecde62ec80253ea45d67978522",
+  "review_date": "2026-10-26",
+  "revision_round": 4,
   "files": {
+    ".agents/skills/collaboration-handoff/SKILL.md": "d56b58e931ffc7d9fc6e4dcae964e84cae82de8dfd7325ab6bc708c912edd441",
+    ".agents/skills/remediate-findings/SKILL.md": "7211f941208b62a8b277f9f6d445285b2c1b14d347ff450625ab67c3dd7fbbd6",
+    ".agents/skills/verify-and-review/SKILL.md": "db5a4c3485b03f59379f15c39036fff89cab09bc7e83d16b0fb0f1f32d3f26e7",
+    ".claude/skills/collaboration-handoff/SKILL.md": "e216ac00e7f0ddeaec84041eda7f170d8a237901e67d658bded86cc98a762248",
+    ".claude/skills/remediate-findings/SKILL.md": "65f744880b32c54546b03d20a4c1f201a301c608bdbcd0512b4c3435272f087a",
+    ".claude/skills/verify-and-review/SKILL.md": "f900979f187a682e011d7938a15e81cd676dc114fe868e41540c1ca96a91b4d9",
+    "docs/ai-collaboration-workflow.md": "2c9052d999bfb99cfcd4e35c2f3adf939a193de4270f7f5f35edf6068598f483",
+    "docs/skills/collaboration-handoff.md": "4c5e8ab9f28df43512dff4d80658697fac6423ecd740eb22dc8bbd636bfa815d",
+    "docs/skills/remediate-findings.md": "a86b2205e0baf0c9dd4ee7f0d6494ceda8d9fdacafb5f641d3c9f3192a233f25",
+    "docs/skills/verify-and-review.md": "77009e5b2cc56dabdd7b27e7cfbacfe001547b7bae53102fa6d02dc7bc18fb25",
     "scripts/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "scripts/_cli_helper.py": "3d330761f5f87f4ca17ae845d67cafca50c90fc8ea6e425691f8a7a6a4d2e34d",
-    "scripts/check_connection.py": "79ddbdd6775f74680dd4186477b9db6b40b1bc7ab43beb1ace9995895b6d38ba",
-    "scripts/init_project.py": "ec9bf176598959f7b02a8c88a38032d26e0b072828c42ebe73aa790d13e3f948",
-    "scripts/probe_peer.py": "5eecb5241b4be16b77c16c44f8bd36d439ad56654aad07ef188e61d786157405",
+    "scripts/_cli_helper.py": "b50c5aa1f27a6fda074bf32d169f76afe4c97ccec39063fd715d45727ae7cfd7",
+    "scripts/_probe.py": "73c108f671040d315272bcb455c275ec23e79d13c0a0e19c343e09601e63d250",
+    "scripts/_project.py": "d6336c8c260236572e0dc91a088aa21de3e1f23ccfff53cec67415a6828db822",
+    "scripts/_protocol.py": "687c30112526c156c938ad35da5806e695ed4e050a9cc6a0e72fd8c5bf4807d7",
+    "scripts/check_connection.py": "101fa927c4e24fce677ae33ae5c68edaa24f2b8c2846ab6c89330f401cc022a2",
+    "scripts/init_project.py": "e2c2fed7a923ae8bfd0db16e80366749dd28b8e748a6618c912e1034e024f13f",
+    "scripts/probe_context.py": "c1aa05a2bed72ddea019442aa4c124d8a665baf639abaac7fd58b7179fdd78dd",
+    "scripts/probe_peer.py": "992d1e1b00ab2341f8a543aa4881c340c6cf4633b01a43168f90f5608eb73d72",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "tests/test_scripts.py": "a5834712ba35a18f8283674bfd693c0f4b358c94f579910cc4e2afca9ef410b0"
+    "tests/test_scripts.py": "8006286d3795001858e12622c648f564717fcd1f3e57ecc63605bf7b1ef744c0"
   }
 }

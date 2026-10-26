@@ -6,7 +6,7 @@
 
 Claude Code 是本 repo 的固定規格、架構與實作負責方。
 
-Claude Code 規劃並實作產品工作，包含 frontend、backend、整合、測試與實作文件。步驟 4、7–8、11–12、14–15 由 Claude Code 負責（詳見角色地圖）；Codex 負責獨立審查與驗證。
+Claude Code 規劃並實作產品工作，包含 frontend、backend、整合、測試與實作文件。步驟 4（Solution Design）、5（Technical Design）、7（Environment Setup）、8（Implementation）、11（Functional Acceptance）、12（Remediation）、14（Deployment）、15（Documentation）、16（Monitoring）由 Claude Code 負責或共同負責（詳見角色地圖）；Codex 負責獨立審查與驗證。
 
 ## Required Workflow
 

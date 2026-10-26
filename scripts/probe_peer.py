@@ -13,12 +13,13 @@ Usage:
                                --nonce NONCE --root ROOT
 
 Writes inner evidence to:
-  reports/connection_reports/probe_<direction>_<nonce>.json
+  reports/connection_reports/probe_<direction>_<nonce>.json  (gitignored)
 
-Evidence includes: status, direction, nonce, rc, session_id, root, rule_hash.
+Evidence includes: status, direction, nonce, rc, inner_session_id, root, rule_hash,
+                   target_cli, raw_inner_stdout, stderr.
 
 Restrictions:
-  - Depth guard: refuses if AI_COLLAB_CHECK_DEPTH > 1.
+  - Depth guard: refuses if AI_COLLAB_NO_DELEGATION set or AI_COLLAB_CHECK_DEPTH > 1.
   - Does NOT call check_connection.py or probe_peer.py itself.
   - May only write to reports/connection_reports/.
   - Reports auth/sandbox blocks honestly without bypassing them.
@@ -29,6 +30,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -40,305 +42,379 @@ WORKFLOW_DOC = 'docs/ai-collaboration-workflow.md'
 
 
 def main(argv=None):
-    # Depth guard — checked at entry before anything else
-    current_depth = int(os.environ.get(_RECURSION_ENV, '0'))
+    # Depth / delegation guard — checked at entry before anything else
+    if os.environ.get(_NO_DELEGATION_ENV):
+        _die_early('AI_COLLAB_NO_DELEGATION is set — delegation refused')
+
+    depth_raw = os.environ.get(_RECURSION_ENV, '0')
+    try:
+        current_depth = int(depth_raw)
+    except (ValueError, TypeError):
+        _die_early(f'AI_COLLAB_CHECK_DEPTH is not an integer: {depth_raw!r}')
+        return  # unreachable; satisfies linters
+
     if current_depth > 1:
-        _die(f'Depth guard: AI_COLLAB_CHECK_DEPTH={current_depth} > 1. '
-             f'Refusing recursive probe_peer invocation.')
+        _die_early(
+            f'Depth guard: AI_COLLAB_CHECK_DEPTH={current_depth} > 1. '
+            f'Refusing recursive probe_peer invocation.'
+        )
 
     parser = argparse.ArgumentParser(description='Bounded peer probe helper.')
     parser.add_argument('--direction', required=True,
-                        choices=['claude-to-codex', 'codex-to-claude'],
-                        help='Which direction to probe')
-    parser.add_argument('--nonce', required=True, help='Unique nonce for this probe')
-    parser.add_argument('--root', required=True, help='Project root path')
+                        choices=['claude-to-codex', 'codex-to-claude'])
+    parser.add_argument('--nonce', required=True)
+    parser.add_argument('--root', required=True)
+    parser.add_argument('--depth', type=int, default=None)
     args = parser.parse_args(argv)
 
-    root = pathlib.Path(args.root).resolve()
-    config = _load_config(root)
+    # Validate --nonce: must be nonempty bounded hex, no traversal or control chars
+    _NONCE_RE = re.compile(r'^[a-fA-F0-9]{1,64}$')
+    if not _NONCE_RE.match(args.nonce):
+        _die_early(
+            f'--nonce must be 1-64 hex characters [a-fA-F0-9], got {args.nonce!r}; '
+            f'rejecting to prevent path traversal'
+        )
+
+    root_raw = args.root
+    try:
+        root = pathlib.Path(root_raw).resolve()
+    except (TypeError, ValueError) as e:
+        _die_early(f'invalid --root: {e}')
+        return
+
+    # Validate root is absolute before anything else
+    if not pathlib.Path(root_raw).is_absolute():
+        _die_early(f'--root must be an absolute path, got {root_raw!r}')
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+
+    # Validate --depth if provided
+    if args.depth is not None:
+        if args.depth < 0 or args.depth > 1:
+            _die_early(f'--depth must be 0 or 1, got {args.depth!r}')
+
+    config, config_err = _load_config(root)
+    if config_err:
+        _die_early(f'config error: {config_err}')
+        return
     overrides = config.get('overrides', {})
     timeout = config.get('timeouts', {}).get('live_secs', 180)
 
-    # Compute local rule_hash for evidence
+    # Compute local rule_hash — guard is_file
     workflow = root / WORKFLOW_DOC
-    rule_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16] if workflow.exists() else ''
+    if not workflow.is_file():
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': 'Fail(workflow doc missing or not a file)',
+            'direction': args.direction,
+            'target_cli': _target_cli(args.direction),
+            'nonce': args.nonce,
+            'rc': None,
+            'inner_session_id': None,
+            'root': str(root),
+            'rule_hash': '',
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, 'workflow doc missing or not a file')
 
-    target_cli = 'codex' if args.direction == 'claude-to-codex' else 'claude'
+    rule_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
+    target_cli = _target_cli(args.direction)
 
     cli_path = _get_cli_path(target_cli, config, overrides)
     if not cli_path:
-        _write_evidence(root, args.direction, args.nonce, {
-            'status': 'Fail',
-            'reason': f'{target_cli} CLI not found',
-            'nonce': args.nonce,
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': 'Fail(target CLI not found)',
             'direction': args.direction,
             'target_cli': target_cli,
+            'nonce': args.nonce,
             'rc': None,
-            'session_id': None,
+            'inner_session_id': None,
             'root': str(root),
             'rule_hash': rule_hash,
-            'inner_response': None,
-            'auth_error': False,
-        })
-        _die(f'{target_cli} CLI not found')
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, f'{target_cli} CLI not found')
 
-    prompt = _make_probe_prompt(args.nonce, args.direction)
+    # Build context command for inner model
+    context_script = root / 'scripts' / 'probe_context.py'
+    if not context_script.is_file():
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': 'Fail(probe_context.py missing)',
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': None,
+            'inner_session_id': None,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, 'probe_context.py missing')
 
-    sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from _cli_helper import build_args, run_with_timeout
+    from _probe import make_context_cmd_str, probe_env
+    ctx_cmd_str, _ctx_args = make_context_cmd_str(
+        root, context_script, args.nonce, direction=args.direction
+    )
 
     try:
+        from _cli_helper import build_args, run_with_timeout
         if target_cli == 'claude':
-            full_args = build_args(cli_path, [
+            prompt = _make_inner_prompt_claude(args.nonce, args.direction, ctx_cmd_str)
+            user_args = [
                 '-p', prompt,
-                '--output-format', 'json',
-            ])
+                '--effort', 'low',
+                '--tools', 'Read,Bash',
+                '--allowedTools', 'Read,Bash',
+                '--output-format', 'stream-json',
+                '--verbose',
+            ]
         else:
-            full_args = build_args(cli_path, [
-                'exec',
-                '--json',
+            prompt = _make_inner_prompt_codex(args.nonce, args.direction, ctx_cmd_str)
+            user_args = [
+                'exec', '--json',
                 '--sandbox', 'read-only',
                 '--cd', str(root),
                 '--skip-git-repo-check',
                 prompt,
-            ])
+            ]
+        full_args = build_args(cli_path, user_args)
     except ValueError as e:
-        _write_evidence(root, args.direction, args.nonce, {
+        _write_and_die(root, args.direction, args.nonce, {
             'status': f'Fail(shim resolution: {e})',
-            'reason': str(e),
-            'nonce': args.nonce,
             'direction': args.direction,
             'target_cli': target_cli,
+            'nonce': args.nonce,
             'rc': None,
-            'session_id': None,
+            'inner_session_id': None,
             'root': str(root),
             'rule_hash': rule_hash,
-            'inner_response': None,
-            'auth_error': False,
-        })
-        _die(str(e))
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, str(e))
 
-    env = os.environ.copy()
-    env[_RECURSION_ENV] = str(current_depth + 1)
-    env[_NO_DELEGATION_ENV] = '1'
+    # inner runs at depth=2, NO_DELEGATION — must not call any agents
+    inner_env = probe_env(os.environ, depth=2, no_delegation=True)
 
+    rc = None
+    out = ''
+    err = ''
     try:
         rc, out, err = run_with_timeout(
             full_args,
             timeout_secs=timeout,
             cwd=str(root),
-            env=env,
+            env=inner_env,
         )
     except subprocess.TimeoutExpired:
-        _write_evidence(root, args.direction, args.nonce, {
-            'status': 'Fail(timeout)',
-            'reason': 'timeout',
-            'nonce': args.nonce,
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': 'Fail(inner timeout)',
             'direction': args.direction,
             'target_cli': target_cli,
+            'nonce': args.nonce,
             'rc': None,
-            'session_id': None,
+            'inner_session_id': None,
             'root': str(root),
             'rule_hash': rule_hash,
-            'inner_response': None,
-            'auth_error': False,
-        })
-        _die('timeout')
-    except Exception as e:
-        _write_evidence(root, args.direction, args.nonce, {
-            'status': f'Fail({type(e).__name__}: {e})',
-            'reason': str(e),
-            'nonce': args.nonce,
+            'raw_inner_stdout': out or None,
+            'stderr': err or None,
+        }, 'inner timeout')
+    except OSError as e:
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': f'Fail(OSError: {e})',
             'direction': args.direction,
             'target_cli': target_cli,
-            'rc': rc if 'rc' in dir() else None,
-            'session_id': None,
+            'nonce': args.nonce,
+            'rc': None,
+            'inner_session_id': None,
             'root': str(root),
             'rule_hash': rule_hash,
-            'inner_response': None,
-            'auth_error': False,
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, str(e))
+    except Exception as e:
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': f'Fail({type(e).__name__}: {e})',
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': None,
+            'inner_session_id': None,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': None,
+            'stderr': None,
+        }, str(e))
+
+    # Strict decode and validate inner response
+    from _protocol import decode, validate_payload
+
+    status = 'Pass'
+    inner_session_id = None
+    try:
+        inner_payload, inner_session_id = decode(target_cli, rc, out)
+    except ValueError as exc:
+        status = f'Fail(inner decode: {exc})'
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': status,
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': rc,
+            'inner_session_id': None,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': out,
+            'stderr': err,
+        }, status)
+
+    # Validate nonce exactly
+    if inner_payload.get('nonce') != args.nonce:
+        status = f'Fail(nonce mismatch: got {inner_payload.get("nonce")!r})'
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': status,
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': rc,
+            'inner_session_id': inner_session_id,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': out,
+            'stderr': err,
+        }, status)
+
+    # Validate root (must be absolute, not normalized from '.')
+    got_root = inner_payload.get('root', '')
+    if not got_root or not pathlib.Path(str(got_root)).is_absolute():
+        status = f'Fail(inner root not absolute: {got_root!r})'
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': status,
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': rc,
+            'inner_session_id': inner_session_id,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': out,
+            'stderr': err,
+        }, status)
+
+    try:
+        validate_payload(inner_payload, {
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'direction': args.direction,
         })
-        _die(str(e))
+    except ValueError as exc:
+        status = f'Fail(inner validation: {exc})'
+        _write_and_die(root, args.direction, args.nonce, {
+            'status': status,
+            'direction': args.direction,
+            'target_cli': target_cli,
+            'nonce': args.nonce,
+            'rc': rc,
+            'inner_session_id': inner_session_id,
+            'root': str(root),
+            'rule_hash': rule_hash,
+            'raw_inner_stdout': out,
+            'stderr': err,
+        }, status)
 
-    # Validate inner response strictly
-    auth_err = _detect_auth_error(rc, out, err)
-    session_id, nonce_found, parse_status = _validate_inner_response(
-        target_cli, rc, out, args.nonce
-    )
-
-    status = 'Pass' if (parse_status == 'Pass' and not auth_err) else parse_status
-    if auth_err and status == 'Pass':
-        status = 'Fail(auth_error detected in response)'
-
+    # Write success evidence
     evidence = {
-        'status': status,
+        'status': 'Pass',
         'direction': args.direction,
         'target_cli': target_cli,
         'nonce': args.nonce,
         'rc': rc,
-        'session_id': session_id,
+        'inner_session_id': inner_session_id,
         'root': str(root),
         'rule_hash': rule_hash,
-        'nonce_found': nonce_found,
-        'inner_response': out[:2000] if out else None,
-        'auth_error': auth_err,
+        'raw_inner_stdout': out,
+        'stderr': err,
         'timestamp': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     }
-
     _write_evidence(root, args.direction, args.nonce, evidence)
-    print(json.dumps({'status': evidence['status'], 'nonce': args.nonce}))
 
-    if evidence['status'] != 'Pass':
-        sys.exit(1)
+    print(json.dumps({
+        'status': 'Pass',
+        'direction': args.direction,
+        'nonce': args.nonce,
+        'inner_session_id': inner_session_id,
+    }))
     return 0
 
 
-def _make_probe_prompt(nonce, direction):
+# ---------------------------------------------------------------------------
+# Prompt builders for inner model
+# ---------------------------------------------------------------------------
+
+def _make_inner_prompt_claude(nonce, direction, ctx_cmd_str):
     return (
-        f'You are a bounded peer probe. '
-        f'NO_DELEGATION: you may not spawn subagents or call other CLIs. '
-        f'Return ONLY this JSON, nothing else: '
-        f'{{"probe":"peer","nonce":"{nonce}","direction":"{direction}"}}'
+        f'You are a connectivity probe inner target. '
+        f'AI_COLLAB_NO_DELEGATION is set — do NOT call agents, CLIs, or delegate. '
+        f'Use Bash to run this exact command:\n'
+        f'  {ctx_cmd_str}\n'
+        f'Return ONLY the JSON object it prints as your entire response. '
+        f'Expected nonce: {nonce!r}, direction: {direction!r}. '
+        f'Do not fabricate hash or root; run the command and return its output.'
     )
 
 
-def _validate_inner_response(cli, rc, raw_out, nonce):
-    """
-    Strictly validate inner CLI response.
-
-    Returns (session_id_or_None, nonce_found_bool, status_str).
-    """
-    if not raw_out or not raw_out.strip():
-        return None, False, 'Fail(empty response)'
-
-    if cli == 'claude':
-        return _validate_inner_claude(rc, raw_out, nonce)
-    if cli == 'codex':
-        return _validate_inner_codex(rc, raw_out, nonce)
-
-    return None, False, 'Fail(unknown CLI)'
+def _make_inner_prompt_codex(nonce, direction, ctx_cmd_str):
+    return (
+        f'Connectivity probe inner target. NO_DELEGATION: do not delegate. '
+        f'Run: {ctx_cmd_str}\n'
+        f'Return ONLY the JSON it prints. '
+        f'Expected nonce: {nonce!r}, direction: {direction!r}.'
+    )
 
 
-def _validate_inner_claude(rc, raw_out, nonce):
-    if rc != 0:
-        return None, False, f'Fail(rc={rc})'
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-    try:
-        data = json.loads(raw_out.strip())
-    except json.JSONDecodeError:
-        return None, False, 'Fail(malformed JSON envelope)'
-
-    if not isinstance(data, dict):
-        return None, False, 'Fail(unexpected JSON type)'
-
-    if data.get('is_error') or data.get('subtype') in ('error', 'turn.failed'):
-        return None, False, f'Fail(error response: subtype={data.get("subtype")})'
-
-    if data.get('type') != 'result' or data.get('subtype') != 'success':
-        return None, False, (
-            f'Fail(type={data.get("type")!r} subtype={data.get("subtype")!r})'
-        )
-
-    session_id = data.get('session_id', '')
-    if not session_id:
-        return None, False, 'Fail(session_id missing)'
-
-    result_text = data.get('result', '')
-    nonce_found = nonce in str(result_text)
-
-    if not nonce_found:
-        return session_id, False, 'Fail(nonce not found in result)'
-
-    return session_id, True, 'Pass'
-
-
-def _validate_inner_codex(rc, raw_out, nonce):
-    if rc != 0:
-        return None, False, f'Fail(rc={rc})'
-
-    lines = [l.strip() for l in raw_out.splitlines() if l.strip()]
-    if not lines:
-        return None, False, 'Fail(empty JSONL)'
-
-    session_id = None
-    has_turn_completed = False
-    has_agent_message = False
-    nonce_found = False
-
-    for line in lines:
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        if not isinstance(obj, dict):
-            continue
-
-        t = obj.get('type', '')
-
-        if t in ('turn.failed', 'error'):
-            return session_id, False, (
-                f'Fail(error event type={t!r} msg={obj.get("message", obj.get("error", ""))})'
-            )
-
-        for id_field in ('session_id', 'thread_id'):
-            v = obj.get(id_field, '')
-            if v and not session_id:
-                session_id = v
-
-        if t == 'turn.completed':
-            has_turn_completed = True
-
-        if t == 'item.completed':
-            item = obj.get('item', {})
-            if item.get('type') == 'agent_message':
-                has_agent_message = True
-                content = item.get('content', [])
-                if isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict) and block.get('type') == 'text':
-                            if nonce in block.get('text', ''):
-                                nonce_found = True
-                elif isinstance(content, str) and nonce in content:
-                    nonce_found = True
-
-    if not has_turn_completed:
-        return session_id, False, 'Fail(turn.completed not found)'
-    if not has_agent_message:
-        return session_id, False, 'Fail(no agent_message found)'
-    if not nonce_found:
-        return session_id, False, 'Fail(nonce not found in agent_message)'
-    if not session_id:
-        return None, True, 'Fail(no session_id or thread_id)'
-
-    return session_id, True, 'Pass'
+def _target_cli(direction):
+    return 'codex' if direction == 'claude-to-codex' else 'claude'
 
 
 def _write_evidence(root, direction, nonce, data):
     report_dir = root / 'reports' / 'connection_reports'
-    report_dir.mkdir(parents=True, exist_ok=True)
-    path = report_dir / f'probe_{direction}_{nonce}.json'
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    try:
+        report_dir.mkdir(parents=True, exist_ok=True)
+        path = report_dir / f'probe_{direction}_{nonce}.json'
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+    except OSError as e:
+        # Print to stderr so caller can detect write failure; absence of artifact is failure
+        print(f'ERROR: failed to write evidence artifact: {e}', file=sys.stderr)
+        sys.exit(1)
 
 
-def _detect_auth_error(rc, out, err):
-    combined = (out + err).lower()
-    for marker in ('unauthorized', 'login', 'auth', '401', 'forbidden', '403'):
-        if marker in combined:
-            return True
-    return False
+def _write_and_die(root, direction, nonce, data, msg):
+    _write_evidence(root, direction, nonce, data)
+    print(json.dumps({'status': data.get('status', f'Fail({msg})'),
+                      'nonce': nonce}))
+    sys.exit(1)
+
+
+def _die_early(msg):
+    print(f'ERROR: {msg}', file=sys.stderr)
+    sys.exit(1)
 
 
 def _load_config(root):
-    config_file = root / '.collaboration' / 'local.json'
-    if config_file.exists():
-        try:
-            data = json.loads(config_file.read_text(encoding='utf-8'))
-            if isinstance(data, dict):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-    return {}
+    """
+    Load and validate config using shared loader.
+    Returns (config_dict, error_str_or_None).
+    """
+    try:
+        from _project import load_config as _shared_load
+        config = _shared_load(root)
+        return config, None
+    except ValueError as e:
+        return {}, str(e)
+    except OSError as e:
+        return {}, f'OSError reading config: {e}'
 
 
 def _get_cli_path(cli, config, overrides):
@@ -350,11 +426,6 @@ def _get_cli_path(cli, config, overrides):
         return stored
     import shutil
     return shutil.which(cli)
-
-
-def _die(msg):
-    print(f'ERROR: {msg}', file=sys.stderr)
-    sys.exit(1)
 
 
 if __name__ == '__main__':
