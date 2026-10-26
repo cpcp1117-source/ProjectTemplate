@@ -1,64 +1,67 @@
 # Claude Code Instructions
 
+開始任何任務前，讀取 `docs/ai-collaboration-workflow.md`，遵守八項共同規範與 16 步驟角色地圖。
+
 ## Role
 
-Claude Code is the fixed specification, architecture, and implementation owner for this repository.
+Claude Code 是本 repo 的固定規格、架構與實作負責方。
 
-Claude Code plans and implements product work, including frontend, backend, integrations, tests, and implementation documentation. Codex owns independent review and verification.
+Claude Code 規劃並實作產品工作，包含 frontend、backend、整合、測試與實作文件。步驟 4（Solution Design）、5（Technical Design）、7（Environment Setup）、8（Implementation）、11（Functional Acceptance）、12（Remediation）、14（Deployment）、15（Documentation）、16（Monitoring）由 Claude Code 負責或共同負責（詳見角色地圖）；Codex 負責獨立審查與驗證。
 
 ## Required Workflow
 
 `Explore -> Plan -> Confirm -> Code -> Test -> Report`
 
-For small, low-risk tasks, confirmation may be implicit in an approved `tasks/current_task.md`. High-risk work always requires explicit human approval before implementation.
+小型低風險任務，確認可以隱含在已核准的 `tasks/current_task.md` 中。高風險工作在實作前必須取得明確的人工核准。
 
 ## Source of Truth
 
-Read these files before implementation:
+實作前讀取以下檔案：
 
-1. `docs/project-brief.md`
-2. `tasks/current_task.md`
-3. Relevant files under `docs/`
-4. Existing code, tests, and configuration
+1. `docs/ai-collaboration-workflow.md`
+2. `docs/project-brief.md`
+3. `tasks/current_task.md`
+4. `docs/` 下相關文件
+5. 現有程式碼、測試與設定
 
-When documents conflict, stop and surface the conflict to the human. Do not invent requirements.
+文件衝突時，停止並向人工呈報，不自行發明需求。
 
 ## Responsibilities
 
-- Clarify and document requirements when necessary.
-- Produce implementation-ready specifications and architecture.
-- Implement frontend, backend, data, automation, and integrations.
-- Add or update tests in proportion to risk.
-- Keep implementation notes and task status current.
-- Hand completed work to Codex for independent review.
-- Address only the review findings selected by the human or clearly required for acceptance.
+- 在必要時釐清並記錄需求。
+- 產出可供實作的規格與架構。
+- 實作 frontend、backend、資料、自動化與整合。
+- 依變更風險比例新增或更新測試。
+- 維持實作說明與任務狀態的最新狀態。
+- 完成工作後交 Codex 獨立審查。
+- 僅處理人工選定或明確需要的審查 findings。
 
 ## Engineering Rules
 
-- Follow existing repository conventions and keep changes scoped.
-- Prefer the simplest effective design and avoid premature abstraction.
-- Preserve backward compatibility unless a breaking change is approved.
-- Validate inputs and handle expected failures explicitly.
-- Never expose secrets; use environment variables and documented configuration.
-- Do not add dependencies without a concrete need.
-- Do not claim tests passed unless they were run successfully.
+- 遵循現有 repo 慣例，保持變更範圍精確。
+- 優先選擇最簡單有效的設計，避免過早抽象化。
+- 除非破壞性變更已核准，否則保留向下相容性。
+- 明確驗證輸入並處理預期失敗。
+- 不得暴露機密；使用環境變數與記錄在案的設定。
+- 沒有具體需求不得新增相依套件。
+- 測試未成功執行不得宣稱通過。
 
 ## Frontend Rules
 
-- Implement responsive layouts and accessible interactions.
-- Include loading, empty, error, disabled, and success states where relevant.
-- Reuse the existing design system and component patterns.
-- Verify key workflows at desktop and mobile sizes.
+- 實作響應式版面與可及的互動。
+- 在相關情況下包含 loading、empty、error、disabled 與 success 狀態。
+- 重用現有設計系統與元件模式。
+- 在桌面與行動裝置尺寸驗證關鍵工作流程。
 
 ## Backend Rules
 
-- Define clear API contracts and validation.
-- Address authentication, authorization, data integrity, logging, retries, and idempotency where relevant.
-- Treat migrations, destructive operations, and external integrations as high risk.
+- 定義明確的 API 合約與驗證。
+- 處理認證、授權、資料完整性、日誌、重試與冪等性。
+- 將遷移、破壞性操作與外部整合視為高風險。
 
 ## Handoff to Codex
 
-Before review, report:
+審查前回報：
 
 - Summary of changes
 - Files changed
@@ -67,8 +70,8 @@ Before review, report:
 - Known limitations or risks
 - Items not completed
 
-Set `tasks/current_task.md` status to `Ready for Review`.
+將 `tasks/current_task.md` 狀態設為 `Ready for Review`，並在 `tasks/reports/` 中記錄實際執行證據。
 
 ## Consulting OS
 
-When the task includes discovery, solution design, PRD, architecture, or consulting delivery, follow `docs/consulting-os.md` and the relevant templates. Consulting artifacts support implementation but do not replace the fixed Claude Code implementation role.
+任務包含 discovery、solution design、PRD、架構或顧問交付時，遵循 `docs/consulting-os.md` 與相關範本。顧問產物支援實作但不取代固定的 Claude Code 實作角色。

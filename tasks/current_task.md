@@ -1,10 +1,35 @@
 # Current Task
 
+## Task ID
+
+TBD
+
+## Stage
+
+Discovery / Design / Implementation / Verification / Review / Release / Done
+
+## Owner
+
+Claude Code / Codex
+
+## Reviewer
+
+Claude Code / Codex
+
+## Baseline
+
+- Commit: TBD
+- Dirty files manifest: TBD
+
 ## Objective
 
 TBD
 
 ## Background
+
+TBD
+
+## Inputs
 
 TBD
 
@@ -16,15 +41,23 @@ TBD
 
 TBD
 
+## Allowed Paths
+
+TBD
+
+## Forbidden Paths
+
+TBD
+
+## Verification Commands
+
+TBD
+
 ## In Scope
 
 TBD
 
 ## Out of Scope
-
-TBD
-
-## Files Involved
 
 TBD
 
@@ -36,15 +69,27 @@ TBD
 
 Low / Medium / High
 
-## Approval Required
+## Timeout
 
-Yes / No
+TBD (e.g., 30 minutes)
+
+## Revision Round
+
+0 / max: 2
 
 ## Implementation Notes
 
 TBD
 
-## Review Notes
+## Findings
+
+TBD
+
+## Verdict
+
+Not Started / Ready / Ready with Conditions / Not Ready
+
+## Improvement Backlog
 
 TBD
 

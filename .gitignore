@@ -1,0 +1,26 @@
+# AI collaboration local config (machine-specific, gitignored)
+.collaboration/
+
+# Raw CLI output logs (non-curated, ignored)
+reports/connection_reports/*.json
+reports/connection_reports/*.jsonl
+reports/connection_reports/*.log
+
+# Test temporary files
+tests/tmp/
+tests/fixtures/tmp/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Auth and credential files
+.env
+*.token
+*.credential
+
+# Local caches
+.cache/
+
+# OS files
+.DS_Store
+Thumbs.db
