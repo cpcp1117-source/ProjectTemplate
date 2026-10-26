@@ -1,3 +1,5 @@
+> Historical review of the legacy nested-probe implementation. Current Windows host-controller verdict and evidence: [Controller Review](TEMPLATE-001-controller.md).
+
 # Delivery Quality Review
 
 ## Review Target

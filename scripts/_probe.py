@@ -4,17 +4,17 @@ Shared probe invocation helpers for check_connection.py and probe_peer.py.
 Provides:
   - invoke_cli(cli, path, user_args, root, timeout, env) -> (rc, stdout, stderr)
   - shell_command(args) -> command string for evidence/logging
-  - make_ps_encoded_cmd(args) -> PowerShell -EncodedCommand invocation list
-  - make_safe_bash_cmd(args) -> shlex-quoted string for Claude Bash tool
+  - make_ps_file_cmd(ps_script, params) -> subprocess arg list for PS -File invocation
+  - make_safe_bash_cmd(args) -> shlex-quoted string for Claude Bash tool (POSIX or PS -Command)
+  - make_probe_peer_cmd_str(root, probe_script, direction, inner_nonce) -> (cmd_str, subprocess_args)
+  - make_context_cmd_str(root, context_script, nonce, direction) -> (cmd_str, subprocess_args)
 
-Safe Windows PS command building:
-  - Constructs a PS script using & with literal quoted args; double single-quotes inside.
-  - UTF-16LE base64 encode for -EncodedCommand; no shell metacharacter expansion.
-  - For POSIX: shlex.join of the arg list.
-  - Never uses bare 'python' or relative paths.
+Model-facing Windows command uses powershell.exe -NoProfile -NonInteractive -Command
+with & and the absolute Python exe directly — avoids ExecutionPolicy issues with -File.
+invoke_probe.ps1 remains available for manual use but is not used in default probes.
+No -EncodedCommand, no Invoke-Expression, no ExecutionPolicy bypass. Never bare 'python'.
 """
 
-import base64
 import os
 import pathlib
 import shlex
@@ -28,48 +28,38 @@ def _ps_path():
     return str(pathlib.Path(system_root) / 'System32' / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe')
 
 
-def _ps_literal(s):
-    """Escape a string for use inside PS single-quoted string literal."""
-    return s.replace("'", "''")
-
-
-def _build_ps_script(args):
+def make_ps_file_cmd(ps_script, params):
     """
-    Build a PowerShell script that invokes args safely.
+    Return a subprocess arg list: powershell.exe -File <ps_script> [params...].
 
-    Each arg is placed in a single-quoted PS literal; & calls the first.
-    Appends '; exit $LASTEXITCODE' so the PS process propagates rc.
+    ps_script: absolute path to a .ps1 file (str or Path).
+    params: flat list of ['-Param', 'value', ...] strings.
+    No -EncodedCommand. Args are passed as literal subprocess elements.
     """
-    if not args:
-        raise ValueError('args must be non-empty')
-    quoted = [f"'{_ps_literal(str(a))}'" for a in args]
-    return '& ' + ' '.join(quoted) + '; exit $LASTEXITCODE'
-
-
-def make_ps_encoded_cmd(args):
-    """
-    Return a subprocess arg list that runs args via PowerShell -EncodedCommand.
-
-    Safe for args containing spaces, CJK, apostrophes, &, $, %, etc.
-    """
-    script = _build_ps_script(args)
-    encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
     ps = _ps_path()
-    return [ps, '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]
+    return [ps, '-NoProfile', '-NonInteractive', '-File', str(ps_script)] + list(params)
 
 
 def make_safe_bash_cmd(args):
     """
-    Return a shell string suitable for Claude's Bash tool (POSIX shlex).
+    Return a shell string suitable for Claude's Bash tool.
 
-    Converts PowerShell.exe path to forward slashes for Bash compatibility.
+    On Windows: wraps args in a powershell.exe -NoProfile -NonInteractive -Command
+    invocation using & with the absolute Python exe and literal arguments.
+    No -EncodedCommand, no ExecutionPolicy change, no invoke_probe.ps1.
+    On POSIX: shlex.join of the arg list (direct Python invocation).
+
+    args is the Python subprocess arg list (python, script, --param, value, ...).
     """
     if os.name == 'nt':
+        # Build a readable PS -Command invocation with & and literal args.
+        # Single quotes in PS -Command: double any existing single quotes.
+        def _ps_quote(s):
+            return "'" + str(s).replace("'", "''") + "'"
+        inner = '& ' + ' '.join(_ps_quote(a) for a in args)
         ps = _ps_path().replace('\\', '/')
-        script = _build_ps_script(args)
-        encoded = base64.b64encode(script.encode('utf-16-le')).decode('ascii')
-        parts = [ps, '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded]
-        return shlex.join(parts)
+        # Wrap for Bash: powershell.exe -NoProfile -NonInteractive -Command '<inner>'
+        return shlex.join([ps, '-NoProfile', '-NonInteractive', '-Command', inner])
     return shlex.join(str(a) for a in args)
 
 
@@ -92,45 +82,92 @@ def invoke_cli(cli, path, user_args, root, timeout_secs, env=None):
     return run_with_timeout(args, timeout_secs=timeout_secs, cwd=str(root), env=env)
 
 
+def _ps_command_str(py_args):
+    """
+    Build a powershell.exe -Command string invoking Python directly via &.
+
+    py_args: list of strings [python_exe, script, arg, ...].
+    Single quotes are doubled for PowerShell quoting inside -Command '...'.
+    Returns the full cmd_str (for embedding in a model prompt / Bash tool call)
+    and the subprocess_args list (for local evidence verification).
+    """
+    def _ps_quote(s):
+        return "'" + str(s).replace("'", "''") + "'"
+
+    ps = _ps_path()
+    inner = '& ' + ' '.join(_ps_quote(a) for a in py_args)
+    subprocess_args = [ps, '-NoProfile', '-NonInteractive', '-Command', inner]
+    # Readable string for Claude Bash tool: shlex-quote the whole PS invocation
+    ps_fwd = ps.replace('\\', '/')
+    cmd_str = shlex.join([ps_fwd, '-NoProfile', '-NonInteractive', '-Command', inner])
+    return cmd_str, subprocess_args
+
+
 def make_probe_peer_cmd_str(root, probe_script, direction, inner_nonce):
     """
-    Build the exact safe command string that outer model must run via Bash.
+    Build the exact safe command string that the outer model must run via Bash/shell.
+
+    On Windows: returns a readable powershell.exe -Command string invoking Python
+    directly via & with literal arguments. No -File, no ExecutionPolicy change,
+    no -EncodedCommand. Inspectable by Read tool.
+    On POSIX: returns shlex-quoted Python invocation.
 
     Returns (cmd_str, subprocess_args_for_verification).
-    cmd_str is what we embed in the prompt (shlex-quoted or PS-encoded).
+    cmd_str is embedded in the model prompt.
+    subprocess_args is what we'd run directly (for evidence matching).
     """
-    args = [
-        sys.executable, '-X', 'utf8',
-        str(probe_script),
-        '--direction', direction,
-        '--nonce', inner_nonce,
-        '--root', str(root),
-    ]
+    root = pathlib.Path(root)
     if os.name == 'nt':
-        cmd_str = make_safe_bash_cmd(args)
+        py_args = [
+            sys.executable, '-X', 'utf8',
+            str(probe_script),
+            '--direction', direction,
+            '--nonce', inner_nonce,
+            '--root', str(root),
+        ]
+        return _ps_command_str(py_args)
     else:
-        cmd_str = shlex.join(str(a) for a in args)
-    return cmd_str, args
+        subprocess_args = [
+            sys.executable, '-X', 'utf8',
+            str(probe_script),
+            '--direction', direction,
+            '--nonce', inner_nonce,
+            '--root', str(root),
+        ]
+        cmd_str = shlex.join(str(a) for a in subprocess_args)
+    return cmd_str, subprocess_args
 
 
 def make_context_cmd_str(root, context_script, nonce, direction=None):
     """
     Build safe command string for probe_context.py invocation.
 
+    On Windows: readable powershell.exe -Command string invoking Python directly
+    via & with literal arguments. No -File, no ExecutionPolicy change.
+    On POSIX: shlex-quoted Python invocation.
+
     Returns (cmd_str, subprocess_args).
     """
-    args = [
-        sys.executable, '-X', 'utf8',
-        str(context_script),
-        '--nonce', nonce,
-    ]
-    if direction is not None:
-        args += ['--direction', direction]
+    root = pathlib.Path(root)
     if os.name == 'nt':
-        cmd_str = make_safe_bash_cmd(args)
+        py_args = [
+            sys.executable, '-X', 'utf8',
+            str(context_script),
+            '--nonce', nonce,
+        ]
+        if direction is not None:
+            py_args += ['--direction', direction]
+        return _ps_command_str(py_args)
     else:
-        cmd_str = shlex.join(str(a) for a in args)
-    return cmd_str, args
+        subprocess_args = [
+            sys.executable, '-X', 'utf8',
+            str(context_script),
+            '--nonce', nonce,
+        ]
+        if direction is not None:
+            subprocess_args += ['--direction', direction]
+        cmd_str = shlex.join(str(a) for a in subprocess_args)
+    return cmd_str, subprocess_args
 
 
 def probe_env(base_env, depth, no_delegation=False):

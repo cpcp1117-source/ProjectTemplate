@@ -41,6 +41,7 @@ Effective Date: 2026-10-22
 
 ### Rule 6: Explicit Review Verdict
 
+- 後續工作與問題回報使用清單，依重要性與後續影響排序。每項說明具體問題、涉及範圍、使用者影響、會影響的後續工作、可採取的處理方式、建議方案與驗證方式；區分已確認事實與待驗證推論，不只寫「有問題待處理」。
 - Codex 提供 Ready、Ready with Conditions 或 Not Ready。
 - 每項問題包含 Finding ID、Critical／Major／Minor、位置、影響、修正預期、驗證方式與 Owner。
 - Critical 或 Major 未解決不得通過。有條件通過須寫明條件及允許的下一步，不能自動視為可正式發布。

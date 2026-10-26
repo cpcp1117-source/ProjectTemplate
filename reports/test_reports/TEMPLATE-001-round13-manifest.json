@@ -1,0 +1,22 @@
+{
+  "task_id": "TEMPLATE-001",
+  "round": 13,
+  "head": "a6a6075741ec8668b2610268b3887e20e8b4d888",
+  "files": {
+    "scripts/_controller_process.py": "a36a8cf24a02fa0d8b40632d5ab83c76b52f08dc42bb821534cad5f58745a5f0",
+    "scripts/_controller_worker.py": "e17d35047fa73314a97fd410c51156aaa157682051a2509d2f5652539fa1cab4",
+    "scripts/_controller_state.py": "645f22389f6563779b273f6d67890151bb206958aa1e2b20ff66392810817b99",
+    "scripts/collaboration.py": "3e6308b581c05c75102cca5b726c278dab9be1f329dd68b6f7dd0b50016a67d6",
+    "scripts/_appserver_adapter.py": "b74384b58d12dae121bbcda7a79c0e98fb6074ad62640382df9e87b51d446deb",
+    "tests/test_controller.py": "77f7b657d72917cef972bb81c0f9d790bc6868bae5ca5ecfc713092c2705e5b5",
+    "tests/test_controller_lifecycle.py": "4ffe71ed68feb162cd95266cd0eaaab9a0c91721222bad3d83e48ffd56a038b3"
+  },
+  "verdict": "Not Ready",
+  "suite_log": "G:/AI Collaboration/work/round13-tests.log",
+  "independent_cleanup_passed": 2,
+  "recovery_acceptance": {
+    "total": 6,
+    "passed": 2,
+    "failed": 4
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "task_id": "TEMPLATE-001",
+  "round": 16,
+  "verdict": "Ready with Conditions",
+  "snapshot_source": "clean-copy source before display-only round17",
+  "files": {
+    "scripts/_controller_process.py": "e292d561887001fd85739e9ebc4e67076a939734326654dea874c336eb899517",
+    "scripts/_controller_worker.py": "3e3d0672c750f90a2dd2c2cff174992d6c9e1de418f50defe8e850d60b36d2f3",
+    "scripts/_controller_state.py": "645f22389f6563779b273f6d67890151bb206958aa1e2b20ff66392810817b99",
+    "scripts/collaboration.py": "cb99a1df8f1ece1b28d70f5ae99bbfc93d4fac49a20db8d90784031c2cb884a5",
+    "scripts/_appserver_adapter.py": "88cb7a2ee6cbe912323df63ecc125894195683683be0757073a499b9842009ed",
+    "tests/test_controller.py": "77f7b657d72917cef972bb81c0f9d790bc6868bae5ca5ecfc713092c2705e5b5",
+    "tests/test_controller_lifecycle.py": "4ffe71ed68feb162cd95266cd0eaaab9a0c91721222bad3d83e48ffd56a038b3",
+    "tests/test_controller_acceptance.py": "8c2c6a34e9ad857fb83ad1a5e9f95438cbdb85744cfa1c79d57d37daa68bca8b",
+    "tests/test_recovery_acceptance.py": "08d7eb5ed915525bc5b4fff2fe663e6eb6e43d1f95d55ad9b1d2669174e409af",
+    "docs/ai-collaboration-workflow.md": "829d18c94ef3ac716caf2c6ad343daec59ffbc18a6931ac9f2b940ebbfb1a84d"
+  },
+  "independent_suite": {
+    "total": 230,
+    "passed": 229,
+    "skipped": 1
+  },
+  "native_integration": "Pass",
+  "clean_copy_walkthrough": "Pass",
+  "real_recovery_history": "Pass",
+  "conditions": [
+    "public status cleanup/identity fields",
+    "safe recovery docs"
+  ]
+}

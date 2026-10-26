@@ -1,0 +1,28 @@
+{
+  "task_id": "TEMPLATE-001",
+  "review_round": 8,
+  "generated_at": "2026-10-26T09:13:10.043231+00:00",
+  "head": "a6a6075741ec8668b2610268b3887e20e8b4d888",
+  "files": {
+    "scripts/collaboration.py": "65df810f6bd4ac48b3afdd565cb6debfa63742c5bd3265c41d567c17cbd3bebf",
+    "scripts/_controller_state.py": "caedd29c37ee43d265076ff7001bf71511119a9c9b244364ce8264a5581ff4f6",
+    "scripts/_controller_worker.py": "1390deb3c101ee15330bb6a785fe9a09f61fb329e336a9ac7172ca1dd46ed106",
+    "scripts/_appserver_adapter.py": "8bbd2dce252c0fad8cddff32d65d1f110b2566a5131ad9d734317c4a6975800b",
+    "tests/test_controller.py": "c9a955388a8e0a4b8d9bd2a97e64aea960a51f3a56b3eda9a448d24729cd8c07",
+    "scripts/invoke_probe.ps1": "269ff7e79fdadca384b79b3b5cd02b5faa8b1d606fb699323e1f333c2be08272",
+    "docs/controller-usage.md": "288b4136da08f4208778b849d2f9782ac6d0f3eca31e115d85a5ff9405832245"
+  },
+  "tests": {
+    "total": 162,
+    "passed": 160,
+    "failed": 1,
+    "skipped": 1
+  },
+  "claude_smoke_job": "cd91c729d5428d86",
+  "codex_smoke_job": "ff8dfee1c5207923",
+  "verdict": "Not Ready",
+  "claude_smoke": "Pass",
+  "claude_write_job": "c2e3d2d30136daf5",
+  "claude_write": "Pass",
+  "codex_smoke": "Failed after 90s, interrupted status"
+}

@@ -359,7 +359,9 @@ def _make_live_prompt_claude(nonce, ctx_cmd_str):
 def _make_live_prompt_codex(nonce, ctx_cmd_str):
     return (
         f'Connectivity probe. Do NOT delegate or call other CLIs. '
-        f'Run this command: {ctx_cmd_str}\n'
+        f'Use native Windows PowerShell (powershell.exe) to run this command. '
+        f'Do NOT use Bash or WSL. login=false if supported by your tool.\n'
+        f'Command: {ctx_cmd_str}\n'
         f'Return ONLY the JSON object it prints. '
         f'Expected nonce: {nonce!r}. Compute all values by running the command, '
         f'do not fabricate hash or root.'
@@ -463,8 +465,23 @@ def _run_bidirectional(root, config, overrides, timeouts):
             results[f'bidirectional:{direction}'] = f'Fail(outer payload: {exc})'
             continue
 
+        # tool_used must be boolean True (not truthy int or string)
         if outer_payload.get('tool_used') is not True:
             results[f'bidirectional:{direction}'] = 'Fail(outer payload tool_used != true)'
+            continue
+
+        # tool_rc must be an integer (not bool); 0 = success
+        tool_rc = outer_payload.get('tool_rc')
+        if isinstance(tool_rc, bool) or not isinstance(tool_rc, int):
+            results[f'bidirectional:{direction}'] = (
+                f'Fail(outer payload tool_rc={tool_rc!r}; must be integer exit code)'
+            )
+            continue
+        if tool_rc != 0:
+            diag = outer_payload.get('diagnostic', '')
+            results[f'bidirectional:{direction}'] = (
+                f'Fail(probe command exit code={tool_rc}; diagnostic={diag!r})'
+            )
             continue
 
         # Verify real tool_use event in raw stream
@@ -505,17 +522,33 @@ def _run_bidirectional(root, config, overrides, timeouts):
 
 
 def _make_bidi_prompt(direction, outer_nonce, inner_nonce, peer_cmd_str):
+    if direction == 'codex-to-claude':
+        shell_instruction = (
+            'Use your shell/exec tool with the native Windows PowerShell executable '
+            '(powershell.exe) to run the command below. '
+            'Do NOT use Bash or WSL. login=false if supported by your tool.'
+        )
+    else:
+        shell_instruction = (
+            'Use your Bash tool to run the command below exactly as written.'
+        )
     return (
-        f'CONNECTIVITY PROBE depth=1. '
-        f'You are authorized to run exactly ONE Bash command — the bounded peer probe below. '
+        f'CONNECTIVITY PROBE depth=1. direction={direction!r}. '
+        f'You are authorized to run exactly ONE shell command — the bounded peer probe below. '
         f'Do NOT invoke check_connection.py, do NOT call probe_peer.py again, '
         f'do NOT spawn agents or delegate further. '
-        f'Run this command exactly once using Bash:\n'
-        f'  {peer_cmd_str}\n'
-        f'After Bash completes, return ONLY this JSON as your entire response '
-        f'(substitute nothing — use these literal values):\n'
+        f'{shell_instruction}\n\n'
+        f'Command to run once:\n'
+        f'  {peer_cmd_str}\n\n'
+        f'After the command completes, return ONLY valid JSON as your entire response. '
+        f'If the command succeeded (exit code 0), return:\n'
         f'{{"outer_nonce":"{outer_nonce}","inner_nonce":"{inner_nonce}",'
-        f'"direction":"{direction}","tool_used":true}}'
+        f'"direction":"{direction}","tool_used":true,"tool_rc":0}}\n'
+        f'If the command failed (non-zero exit code), return:\n'
+        f'{{"outer_nonce":"{outer_nonce}","inner_nonce":"{inner_nonce}",'
+        f'"direction":"{direction}","tool_used":true,"tool_rc":<actual exit code>,'
+        f'"diagnostic":"<brief error description>"}}\n'
+        f'Do not fabricate success. Set tool_rc to the actual exit code the shell reported.'
     )
 
 
@@ -608,6 +641,7 @@ def _claude_tool_evidence(out, expected_cmd_str):
 
 def _codex_tool_evidence(out, expected_cmd_str):
     """Parse Codex JSONL for item.completed command_execution matching expected command."""
+    import re as _re
     expected_cmd = expected_cmd_str.strip()
     for line in out.splitlines():
         line = line.strip()
@@ -626,10 +660,18 @@ def _codex_tool_evidence(out, expected_cmd_str):
                     and item.get('exit_code') == 0
                     and item.get('status') == 'completed'):
                 cmd = item.get('command', '')
-                # Codex may wrap expected command in a powershell -Command invocation;
-                # expected command must appear as a substring of the executed command.
-                if expected_cmd and expected_cmd in cmd:
-                    return True, f'command_execution exit_code=0 cmd contains expected command'
+                if not expected_cmd or expected_cmd not in cmd:
+                    continue
+                # Reject echo/Write-Output/printf wrappers of the full expected command.
+                # A legitimate wrapper is powershell -Command <...> or pwsh -Command <...>.
+                # An echo/Write-Output wrapper is not a real execution of the command.
+                stripped_cmd = cmd.strip()
+                echo_pattern = _re.compile(
+                    r'^(echo|Write-Output|printf|Write-Host)\s', _re.IGNORECASE
+                )
+                if echo_pattern.match(stripped_cmd):
+                    continue
+                return True, 'command_execution exit_code=0 cmd contains expected command'
     return False, (
         f'no item.completed command_execution exit_code=0 with expected command; '
         f'expected={expected_cmd!r}'
@@ -679,16 +721,17 @@ def _validate_bidi_artifact(artifact, inner_nonce, direction, expected_root,
     if not isinstance(inner_session, str) or not inner_session:
         return 'Fail(artifact inner_session_id missing or empty)'
 
-    # Compute expected rule_hash from expected_root's workflow
+    # Compute expected rule_hash from expected_root's workflow — missing file is Fail
     try:
         workflow = pathlib.Path(expected_root) / 'docs/ai-collaboration-workflow.md'
-        if workflow.is_file():
-            expected_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
-            if artifact.get('rule_hash') != expected_hash:
-                return (
-                    f'Fail(artifact rule_hash mismatch: '
-                    f'got={artifact.get("rule_hash")!r} expected={expected_hash!r})'
-                )
+        if not workflow.is_file():
+            return 'Fail(workflow file missing — cannot validate rule_hash)'
+        expected_hash = hashlib.sha256(workflow.read_bytes()).hexdigest()[:16]
+        if artifact.get('rule_hash') != expected_hash:
+            return (
+                f'Fail(artifact rule_hash mismatch: '
+                f'got={artifact.get("rule_hash")!r} expected={expected_hash!r})'
+            )
     except OSError as e:
         return f'Fail(cannot compute rule_hash for validation: {e})'
 
@@ -709,6 +752,23 @@ def _validate_bidi_artifact(artifact, inner_nonce, direction, expected_root,
         return f'Fail(re-decoded inner session mismatch: {re_session!r} != {inner_session!r})'
     if re_inner.get('nonce') != inner_nonce:
         return f'Fail(re-decoded inner nonce mismatch: {re_inner.get("nonce")!r})'
+
+    # Validate all key fields in re-decoded payload via validate_payload (not nonce only)
+    try:
+        expected_hash = hashlib.sha256(
+            (pathlib.Path(expected_root) / 'docs/ai-collaboration-workflow.md').read_bytes()
+        ).hexdigest()[:16]
+        from _protocol import validate_payload as _vp
+        _vp(re_inner, {
+            'nonce': inner_nonce,
+            'root': expected_root,
+            'rule_hash': expected_hash,
+            'direction': direction,
+        })
+    except OSError as e:
+        return f'Fail(cannot read workflow for re-decoded validation: {e})'
+    except ValueError as exc:
+        return f'Fail(re-decoded inner payload field mismatch: {exc})'
 
     if not tool_evidence:
         return f'NotVerified(artifact valid but outer tool event not found: {tool_detail})'

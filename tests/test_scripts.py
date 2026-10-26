@@ -1106,5 +1106,309 @@ class TestDefectSnapshotRecovery(unittest.TestCase):
                 'Source SHA256 unchanged — snapshot invalidation not demonstrated')
 
 
+# ---------------------------------------------------------------------------
+# _probe.py: readable command strings, no EncodedCommand, path safety
+# ---------------------------------------------------------------------------
+
+class TestProbeCommandStrings(unittest.TestCase):
+
+    def setUp(self):
+        TESTS_TMP.mkdir(parents=True, exist_ok=True)
+        self._td = tempfile.TemporaryDirectory(dir=TESTS_TMP, prefix='probe_cmd_')
+        self.root = pathlib.Path(self._td.name).resolve()
+        # Minimal scripts/invoke_probe.ps1 placeholder
+        scripts_dir = self.root / 'scripts'
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / 'probe_peer.py').write_text('# fixture\n', encoding='utf-8')
+        (scripts_dir / 'probe_context.py').write_text('# fixture\n', encoding='utf-8')
+        (scripts_dir / 'invoke_probe.ps1').write_text('# fixture\n', encoding='utf-8')
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _import_probe(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('_probe', SCRIPTS_DIR / '_probe.py')
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_make_probe_peer_cmd_str_no_encoded_command(self):
+        probe = self._import_probe()
+        probe_script = self.root / 'scripts' / 'probe_peer.py'
+        cmd_str, _ = probe.make_probe_peer_cmd_str(
+            self.root, probe_script, 'claude-to-codex', 'deadbeef01'
+        )
+        self.assertNotIn('-EncodedCommand', cmd_str,
+                         'cmd_str must not contain -EncodedCommand (opaque to models)')
+        self.assertNotIn('EncodedCommand', cmd_str)
+
+    def test_make_context_cmd_str_no_encoded_command(self):
+        probe = self._import_probe()
+        ctx_script = self.root / 'scripts' / 'probe_context.py'
+        cmd_str, _ = probe.make_context_cmd_str(self.root, ctx_script, 'aabbccdd')
+        self.assertNotIn('-EncodedCommand', cmd_str)
+        self.assertNotIn('EncodedCommand', cmd_str)
+
+    def test_make_probe_peer_cmd_str_contains_nonce(self):
+        probe = self._import_probe()
+        probe_script = self.root / 'scripts' / 'probe_peer.py'
+        nonce = 'cafebabe12345678'
+        cmd_str, _ = probe.make_probe_peer_cmd_str(
+            self.root, probe_script, 'claude-to-codex', nonce
+        )
+        self.assertIn(nonce, cmd_str, 'nonce must appear in cmd_str for evidence matching')
+
+    def test_make_probe_peer_cmd_str_contains_direction(self):
+        probe = self._import_probe()
+        probe_script = self.root / 'scripts' / 'probe_peer.py'
+        cmd_str, _ = probe.make_probe_peer_cmd_str(
+            self.root, probe_script, 'codex-to-claude', 'aabbccdd'
+        )
+        self.assertIn('codex-to-claude', cmd_str)
+
+    def test_subprocess_args_match_verification_args(self):
+        # subprocess_args must contain the nonce literally (for evidence matching)
+        probe = self._import_probe()
+        probe_script = self.root / 'scripts' / 'probe_peer.py'
+        nonce = 'beef0011'
+        _, subprocess_args = probe.make_probe_peer_cmd_str(
+            self.root, probe_script, 'claude-to-codex', nonce
+        )
+        args_str = ' '.join(str(a) for a in subprocess_args)
+        self.assertIn(nonce, args_str)
+
+    def test_path_with_spaces_cjk_apostrophe_in_cmd_str(self):
+        # Paths with special chars must appear in cmd_str without breaking it
+        probe = self._import_probe()
+        # Use a root path that contains special chars
+        special_root = self.root / "dir 中文 it's"
+        special_root.mkdir(exist_ok=True)
+        (special_root / 'scripts').mkdir(exist_ok=True)
+        probe_script = special_root / 'scripts' / 'probe_peer.py'
+        probe_script.write_text('# fixture\n', encoding='utf-8')
+        (special_root / 'scripts' / 'invoke_probe.ps1').write_text('# fixture\n', encoding='utf-8')
+        nonce = 'deadbeef'
+        # Should not raise; result should be a non-empty string
+        cmd_str, subprocess_args = probe.make_probe_peer_cmd_str(
+            special_root, probe_script, 'claude-to-codex', nonce
+        )
+        self.assertIsInstance(cmd_str, str)
+        self.assertTrue(cmd_str)
+        self.assertNotIn('-EncodedCommand', cmd_str)
+
+    def test_invoke_probe_ps1_is_readable_file(self):
+        # invoke_probe.ps1 must exist and be a readable .ps1 file for optional manual use.
+        # It must not use -EncodedCommand or Invoke-Expression; must invoke Python via &.
+        ps1_path = SCRIPTS_DIR / 'invoke_probe.ps1'
+        self.assertTrue(ps1_path.is_file(), 'invoke_probe.ps1 must exist in scripts/')
+        content = ps1_path.read_text(encoding='utf-8')
+        self.assertNotIn('-EncodedCommand', content,
+                         'invoke_probe.ps1 must not contain -EncodedCommand')
+        self.assertNotIn('Invoke-Expression', content,
+                         'invoke_probe.ps1 must not use Invoke-Expression')
+        # Must invoke Python via & operator (literal argument array, no shell expansion)
+        self.assertIn('& $Python', content,
+                      'invoke_probe.ps1 must invoke Python via & operator')
+
+    @unittest.skipUnless(os.name != 'nt', 'POSIX path format')
+    def test_posix_cmd_uses_python_directly(self):
+        probe = self._import_probe()
+        probe_script = self.root / 'scripts' / 'probe_peer.py'
+        cmd_str, _ = probe.make_probe_peer_cmd_str(
+            self.root, probe_script, 'claude-to-codex', 'aabbccdd'
+        )
+        # POSIX: should be a python invocation, not powershell
+        self.assertNotIn('powershell', cmd_str.lower())
+
+
+# ---------------------------------------------------------------------------
+# _make_bidi_prompt: shell preference, tool_rc contract, no hardcoded success
+# ---------------------------------------------------------------------------
+
+class TestMakeBidiPrompt(unittest.TestCase):
+
+    def _prompt(self, direction, outer_nonce='on1', inner_nonce='in1',
+                peer_cmd_str='python probe_peer.py --nonce in1'):
+        return _cc._make_bidi_prompt(direction, outer_nonce, inner_nonce, peer_cmd_str)
+
+    def test_codex_to_claude_specifies_native_powershell(self):
+        prompt = self._prompt('codex-to-claude')
+        self.assertIn('powershell', prompt.lower(),
+                      'codex-to-claude prompt must specify native PowerShell')
+        self.assertNotIn('bash.exe', prompt.lower(),
+                         'codex-to-claude must not suggest bash.exe or WSL')
+
+    def test_claude_to_codex_uses_bash_tool(self):
+        prompt = self._prompt('claude-to-codex')
+        self.assertIn('Bash', prompt,
+                      'claude-to-codex prompt must instruct Claude Bash tool use')
+
+    def test_prompt_contains_outer_nonce(self):
+        prompt = self._prompt('claude-to-codex', outer_nonce='aabbccdd')
+        self.assertIn('aabbccdd', prompt)
+
+    def test_prompt_contains_inner_nonce(self):
+        prompt = self._prompt('claude-to-codex', inner_nonce='1122334455')
+        self.assertIn('1122334455', prompt)
+
+    def test_prompt_does_not_hardcode_tool_used_true_without_condition(self):
+        # The prompt must include tool_rc field (actual rc) not just static tool_used:true
+        prompt = self._prompt('claude-to-codex')
+        self.assertIn('tool_rc', prompt,
+                      'prompt must ask model to report actual tool_rc exit code')
+
+    def test_prompt_instructs_diagnostic_on_failure(self):
+        prompt = self._prompt('claude-to-codex')
+        self.assertIn('diagnostic', prompt.lower(),
+                      'prompt must ask for diagnostic on failure')
+
+    def test_prompt_contains_peer_cmd(self):
+        cmd = 'python probe_peer.py --nonce abc'
+        prompt = self._prompt('claude-to-codex', peer_cmd_str=cmd)
+        self.assertIn(cmd, prompt)
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional artifact: tool_rc validation, full-field mutations
+# ---------------------------------------------------------------------------
+
+class TestValidateBidiArtifactExtended(unittest.TestCase):
+
+    def setUp(self):
+        TESTS_TMP.mkdir(parents=True, exist_ok=True)
+        self._td = tempfile.TemporaryDirectory(dir=TESTS_TMP, prefix='bidi_ext_')
+        self.root = pathlib.Path(self._td.name).resolve()
+        wf_path = self.root / 'docs' / 'ai-collaboration-workflow.md'
+        wf_path.parent.mkdir(parents=True, exist_ok=True)
+        wf_path.write_text('Version: 1.0\nFixture workflow\n', encoding='utf-8')
+        self.rule_hash = hashlib.sha256(wf_path.read_bytes()).hexdigest()[:16]
+        self.inner_nonce = 'cafebabe0011'
+        self.direction = 'claude-to-codex'
+        root_str = str(self.root)
+        inner_payload = {
+            'nonce': self.inner_nonce,
+            'root': root_str,
+            'rule_hash': self.rule_hash,
+            'direction': self.direction,
+        }
+        self.inner_raw = _codex_jsonl(
+            thread_id='inner-ext-001',
+            item={'type': 'agent_message', 'text': json.dumps(inner_payload)},
+        )
+        self.artifact = {
+            'status': 'Pass',
+            'direction': self.direction,
+            'nonce': self.inner_nonce,
+            'rc': 0,
+            'root': root_str,
+            'rule_hash': self.rule_hash,
+            'inner_session_id': 'inner-ext-001',
+            'target_cli': 'codex',
+            'raw_inner_stdout': self.inner_raw,
+        }
+
+    def tearDown(self):
+        self._td.cleanup()
+
+    def _validate(self, artifact=None, **kw):
+        a = artifact if artifact is not None else self.artifact
+        return _validate_bidi_artifact(
+            a,
+            kw.get('inner_nonce', self.inner_nonce),
+            kw.get('direction', self.direction),
+            kw.get('root', str(self.root)),
+            kw.get('outer_session', 'outer-ext-001'),
+            kw.get('tool_evidence', True),
+            kw.get('tool_detail', 'ok'),
+            kw.get('outer_raw', ''),
+        )
+
+    def test_rc_false_boolean_fails(self):
+        art = dict(self.artifact, rc=False)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_rc_true_boolean_fails(self):
+        art = dict(self.artifact, rc=True)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_rc_nonzero_int_fails(self):
+        art = dict(self.artifact, rc=1)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_wrong_root_in_raw_stdout_fails(self):
+        # raw_inner_stdout with different root must fail re-decoded validation
+        wrong_payload = {
+            'nonce': self.inner_nonce,
+            'root': '/wrong/root',
+            'rule_hash': self.rule_hash,
+            'direction': self.direction,
+        }
+        wrong_raw = _codex_jsonl(
+            thread_id='inner-ext-001',
+            item={'type': 'agent_message', 'text': json.dumps(wrong_payload)},
+        )
+        art = dict(self.artifact, raw_inner_stdout=wrong_raw)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_wrong_direction_in_raw_stdout_fails(self):
+        wrong_payload = {
+            'nonce': self.inner_nonce,
+            'root': str(self.root),
+            'rule_hash': self.rule_hash,
+            'direction': 'codex-to-claude',  # wrong
+        }
+        wrong_raw = _codex_jsonl(
+            thread_id='inner-ext-001',
+            item={'type': 'agent_message', 'text': json.dumps(wrong_payload)},
+        )
+        art = dict(self.artifact, raw_inner_stdout=wrong_raw)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_wrong_rule_hash_in_raw_stdout_fails(self):
+        wrong_payload = {
+            'nonce': self.inner_nonce,
+            'root': str(self.root),
+            'rule_hash': '0000000000000000',  # wrong
+            'direction': self.direction,
+        }
+        wrong_raw = _codex_jsonl(
+            thread_id='inner-ext-001',
+            item={'type': 'agent_message', 'text': json.dumps(wrong_payload)},
+        )
+        art = dict(self.artifact, raw_inner_stdout=wrong_raw)
+        result = self._validate(artifact=art)
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_missing_workflow_file_fails(self):
+        # Pointing to a root with no workflow doc must Fail, not silently skip hash check
+        result = _validate_bidi_artifact(
+            self.artifact, self.inner_nonce, self.direction,
+            '/nonexistent/root/that/does/not/exist',
+            'outer-s', True, 'ok', '',
+        )
+        self.assertTrue(result.startswith('Fail'), result)
+
+    def test_full_command_echo_fails(self):
+        # Outer raw stdout that only echoes nonce (no real tool_use) must give no tool evidence
+        nonce = 'echo_ext_01'
+        echo_cmd = f'echo {nonce}'
+        expected_cmd = f'python probe_peer.py --nonce {nonce}'
+        ok, detail = _check_outer_tool_evidence('claude', json.dumps({
+            'type': 'result', 'subtype': 'success', 'is_error': False,
+            'session_id': 's', 'result': json.dumps({'echo': nonce}),
+        }), expected_cmd, nonce)
+        self.assertFalse(ok, detail)
+
+    def test_valid_artifact_full_fields_passes(self):
+        result = self._validate()
+        self.assertEqual(result, 'Pass')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
