@@ -1,0 +1,34 @@
+{
+  "task_id": "TEMPLATE-001",
+  "round": 11,
+  "head": "a6a6075741ec8668b2610268b3887e20e8b4d888",
+  "generated_at": "2026-10-26T14:51:17.099207+00:00",
+  "files": {
+    "scripts/_controller_process.py": "2bd9b86503af2cff53fb21615c094fa908f753a325e0d78c81632efcf5d23b8e",
+    "scripts/_controller_worker.py": "997e7c3fbfd1d8eb9fd9ef175734ee11e7c85ff448e94e6259692eef2fb0554c",
+    "scripts/_appserver_adapter.py": "95e530b8c04235c209d5cc38b0950c7b1f29ea6312b05079bd6c398853f42230",
+    "scripts/_controller_state.py": "caedd29c37ee43d265076ff7001bf71511119a9c9b244364ce8264a5581ff4f6",
+    "scripts/collaboration.py": "4f792b631e3c0f586e3d49fd3d76475ac5babe520c50b8f37f4d7e6e098caa29",
+    "tests/test_controller.py": "e0d87ba4b0e60d657185c722610a7520178d39d923fe8eafcc5337698ec95dc8",
+    "tests/test_controller_lifecycle.py": "4ffe71ed68feb162cd95266cd0eaaab9a0c91721222bad3d83e48ffd56a038b3"
+  },
+  "verdict": "Not Ready",
+  "suite": {
+    "total": 200,
+    "passed": 198,
+    "errors": 1,
+    "skipped": 1
+  },
+  "independent": {
+    "grandchild_cleanup": "Pass",
+    "uncertain_cleanup_lock": "Fail"
+  },
+  "native": {
+    "claude_write": "de1f79433881575e",
+    "codex_review": "6ab7f6de24bedc8e",
+    "cancel": "14296b5d956ed204",
+    "timeout": "81ddebff5c3be276",
+    "core_operations": "Pass",
+    "result_format": "contains commentary and duplicate final"
+  }
+}

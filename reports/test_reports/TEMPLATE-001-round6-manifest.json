@@ -1,0 +1,20 @@
+{
+  "baseline_commit": "a6a6075",
+  "review_date": "2026-10-26",
+  "revision_round": 6,
+  "files": {
+    "docs/ai-collaboration-workflow.md": "2c9052d999bfb99cfcd4e35c2f3adf939a193de4270f7f5f35edf6068598f483",
+    "scripts/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "scripts/_cli_helper.py": "b50c5aa1f27a6fda074bf32d169f76afe4c97ccec39063fd715d45727ae7cfd7",
+    "scripts/_probe.py": "321c671d10b3bc28a15a3e94d6b1ed8c147243abef05671d74d87b3423db69c0",
+    "scripts/_project.py": "d6336c8c260236572e0dc91a088aa21de3e1f23ccfff53cec67415a6828db822",
+    "scripts/_protocol.py": "687c30112526c156c938ad35da5806e695ed4e050a9cc6a0e72fd8c5bf4807d7",
+    "scripts/check_connection.py": "b5e5dfdc87441bcbff106c3a76be3bfbb25540a7006f6b68ec157fda31bc53c1",
+    "scripts/init_project.py": "e2c2fed7a923ae8bfd0db16e80366749dd28b8e748a6618c912e1034e024f13f",
+    "scripts/invoke_probe.ps1": "34276885c76a9a2b635d75ea5a3b72d09d2d6cd5d2d037c556640572e21ddccc",
+    "scripts/probe_context.py": "c1aa05a2bed72ddea019442aa4c124d8a665baf639abaac7fd58b7179fdd78dd",
+    "scripts/probe_peer.py": "992d1e1b00ab2341f8a543aa4881c340c6cf4633b01a43168f90f5608eb73d72",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/test_scripts.py": "1b38de22e83e480e0b01fee9164bb442e19ee57b574ef92d99298bb39c0f5fef"
+  }
+}

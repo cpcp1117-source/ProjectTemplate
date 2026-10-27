@@ -1,0 +1,31 @@
+{
+  "task_id": "TEMPLATE-001",
+  "round": 12,
+  "head": "a6a6075741ec8668b2610268b3887e20e8b4d888",
+  "generated_at": "2026-10-26T15:05:18.304804+00:00",
+  "files": {
+    "scripts/_controller_process.py": "2bd9b86503af2cff53fb21615c094fa908f753a325e0d78c81632efcf5d23b8e",
+    "scripts/_controller_worker.py": "7e87aae525db7de2b55c143df505a0ad81ead6e801a94c67c7ddafe720567d82",
+    "scripts/_controller_state.py": "caedd29c37ee43d265076ff7001bf71511119a9c9b244364ce8264a5581ff4f6",
+    "scripts/collaboration.py": "ef4b6324aebe16a5cce410b295a8d76e397badc14b898eb128d5461bf4bc82ee",
+    "scripts/_appserver_adapter.py": "999177fc9f189bbbecc5e9b095e7a4f9e8cf2187273ced23c8eea48431f708ab",
+    "tests/test_controller.py": "2bbe82303a8227345cdbf026e72c7d5719696ca8797eef8b92b755f041c6c325",
+    "tests/test_controller_lifecycle.py": "4ffe71ed68feb162cd95266cd0eaaab9a0c91721222bad3d83e48ffd56a038b3",
+    "README.md": "820026c2c118fab3aa49aad1eb6a24affaaf8b9ce983c4157e89cfc9a4891916",
+    "docs/controller-usage.md": "c0be868fac45c7461eec2e323347197d7d78fb3a16c0f5771a01eb9dea0269d1",
+    "docs/collaboration-validation.md": "eaa094ff5f6b148fcb2d756b646662ba280c7dde348869f2eef65288514ff3c2"
+  },
+  "verdict": "Not Ready",
+  "suite": {
+    "total": 209,
+    "passed": 207,
+    "failures": 1,
+    "skipped": 1
+  },
+  "independent": {
+    "passed": 2,
+    "failed": 0,
+    "injection_updated_to_actual_worker_binding": true
+  },
+  "live_exact_text_json_cancel_timeout": "Pass"
+}

@@ -1,0 +1,46 @@
+{
+  "task_id": "TEMPLATE-001",
+  "round": 10,
+  "generated_at": "2026-10-26T14:02:32.718022+00:00",
+  "head": "a6a6075741ec8668b2610268b3887e20e8b4d888",
+  "verdict": "Not Ready",
+  "files": {
+    "scripts/_controller_process.py": "44945a583987e38a076bd70876b8ed1b6e65d963c157b9ff9f48dbe0ed5685cb",
+    "scripts/_controller_worker.py": "4267ee433328a3d9d8d5383f713b6e345022292fd016a20e1411841beb6ad0cc",
+    "scripts/_controller_state.py": "caedd29c37ee43d265076ff7001bf71511119a9c9b244364ce8264a5581ff4f6",
+    "scripts/collaboration.py": "4f792b631e3c0f586e3d49fd3d76475ac5babe520c50b8f37f4d7e6e098caa29",
+    "scripts/_appserver_adapter.py": "202ac8c2296926cedbbfb4c8212907ccbfe5dfa9143c03ae29f9ce031e7948e3",
+    "scripts/invoke_probe.ps1": "c3f6184d5c79814bc092312a010d86fa6360203b2e3fd99ae76eaa49f3ea8706",
+    "tests/test_controller.py": "e0d87ba4b0e60d657185c722610a7520178d39d923fe8eafcc5337698ec95dc8",
+    "README.md": "5135c190f0c72079be12ab28f7b2ad7ac14cc26ad498c45b0d42442ee2912e0c",
+    "docs/controller-usage.md": "f31a7647a60601616d24925f30bd72203bf869cb10ce2c48bb34e7d8982de165"
+  },
+  "suite": {
+    "exit_code": 0,
+    "total": 186,
+    "passed": 185,
+    "skipped": 1
+  },
+  "independent_descendant_check": {
+    "exit_code": 1,
+    "elapsed_secs": 8.3
+  },
+  "native_claude": {
+    "job": "14a5397cc547cf61",
+    "status": "failed",
+    "artifact_created": true,
+    "error": "subtype=success is_error=False rc=1"
+  },
+  "native_codex": {
+    "job": "83a521331b1d8235",
+    "status": "completed",
+    "duplicate_result": true
+  },
+  "live_cancel_timeout": "Not Run - success path and cleanup gate failed",
+  "clean_project_walkthrough": "Not Run - prerequisite gates failed",
+  "official_references": [
+    "https://learn.chatgpt.com/docs/app-server",
+    "https://code.claude.com/docs/en/headless",
+    "https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects"
+  ]
+}
